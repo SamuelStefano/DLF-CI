@@ -24,27 +24,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint (JSON report)
-        id: lint
-        run: npm run lint:ci
-        continue-on-error: true
-
-      - name: Typecheck
-        run: npm run typecheck
-        if: ${{ always() }}
-
       - name: Reviewdog (ESLint inline comments)
-        if: ${{ always() && steps.lint.outcome == 'failure' }}
+        id: lint
         uses: reviewdog/action-eslint@v1
+        continue-on-error: true
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           reporter: github-pr-review
           filter_mode: diff_context
-          fail_level: error
+          fail_on_error: true
           eslint_flags: "--config eslint.config.js ."
 
-      - name: Fail if lint failed
-        if: ${{ steps.lint.outcome == 'failure' }}
+      - name: Typecheck
+        id: typecheck
+        run: npm run typecheck
+        continue-on-error: true
+
+      - name: Fail if lint or typecheck failed
+        if: ${{ steps.lint.outcome == 'failure' || steps.typecheck.outcome == 'failure' }}
         run: exit 1
 
   comment:

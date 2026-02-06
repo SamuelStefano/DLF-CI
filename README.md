@@ -4,19 +4,23 @@ Workflow de CI reutilizável para validar código em pull requests: roda lint e 
 
 ## O que faz
 
-1. **Lint com ESLint** — valida o código e gera relatório
+1. **Lint com ESLint** — Reviewdog roda ESLint e comenta erros inline no PR
 2. **Typecheck** — verifica tipos TypeScript
-3. **Code review inline** — Reviewdog comenta erros diretamente nas linhas do PR
-4. **Notificação de falha** — bot comenta no PR se algo quebrar
+3. **Notificação de falha** — bot comenta no PR se algo quebrar
 
 **Regras de qualidade (warnings):**
 - ⚠️ Arquivos com mais de 150 linhas
-- ⚠️ Comentários no código
-- ⚠️ Regras TypeScript recomendadas
+- ⚠️ Comentários no código (inline ou mal posicionados)
+- ⚠️ Regras TypeScript recomendadas (unused vars, any, etc)
 
 **Comportamento:**
 - ✅ Sucesso → CI passa em silêncio
-- ❌ Falha → comentário no PR + review inline
+- ❌ Falha → comentários inline do Reviewdog + comentário de resumo do bot
+
+**Como funciona:**
+- O Reviewdog executa o ESLint automaticamente nos arquivos modificados
+- Comentários aparecem inline nas linhas com erro
+- Não precisa configurar output JSON ou relatórios
 
 ## Como usar em outro repositório
 
@@ -47,7 +51,6 @@ Substitua `SEU-USUARIO` pelo usuário/org do GitHub onde este repo está.
 ```json
 {
   "scripts": {
-    "lint:ci": "eslint --config eslint.config.js .",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
@@ -59,7 +62,7 @@ Substitua `SEU-USUARIO` pelo usuário/org do GitHub onde este repo está.
 }
 ```
 
-Ajuste os comandos conforme o setup do seu projeto. O importante é que `lint:ci` e `typecheck` existam.
+**Importante:** O Reviewdog roda o ESLint automaticamente. Você só precisa do script `typecheck`.
 
 ### 3. Crie eslint.config.js
 
@@ -130,8 +133,9 @@ Pronto. Abra um PR e o CI vai rodar automaticamente.
 
 - Node.js 20+
 - TypeScript (`.ts`, `.tsx`)
-- `package.json` com scripts `lint:ci` e `typecheck`
+- `package.json` com script `typecheck`
 - ESLint + plugins TypeScript instalados
+- `eslint.config.js` configurado
 - `package-lock.json` commitado
 - `tsconfig.json` configurado
 
@@ -152,15 +156,50 @@ seu-repo/
 
 ## Exemplo de falha
 
-Se o lint ou typecheck falhar, o bot comenta no PR:
+### Comentários inline (Reviewdog)
+
+Se houver erros de lint, o Reviewdog comenta diretamente nas linhas:
+
+```
+exemplo.ts linha 15:
+⚠️ File has too many lines (152). Maximum allowed is 150
+```
+
+```
+exemplo.ts linha 3:
+⚠️ Unexpected comment inline with code
+```
+
+### Comentário de resumo (Bot)
+
+Se o CI falhar completamente, o bot adiciona um comentário no PR:
 
 > ❌ CI falhou (lint/typecheck).
 >
 > Logs completos: [link]
 >
-> Próximo passo: abrir os logs, corrigir o erro apontado e rodar `npm run lint` e `npm run typecheck` localmente antes do próximo push.
+> Próximo passo: abrir os logs, corrigir o erro apontado e rodar `npm run typecheck` localmente antes do próximo push.
 
-E o Reviewdog adiciona comentários inline nas linhas problemáticas.
+## Troubleshooting
+
+### Reviewdog não está comentando
+
+1. **Verifique se há erros de lint:** Rode `npx eslint --config eslint.config.js .` localmente
+2. **Verifique as permissões:** O workflow precisa de `pull-requests: write`
+3. **Verifique se o eslint.config.js existe:** Reviewdog usa `--config eslint.config.js .`
+4. **Verifique os arquivos modificados:** Reviewdog só comenta em arquivos que foram alterados no PR
+
+### CI passa mas há erros no código
+
+- O Reviewdog pode gerar warnings sem falhar o CI se `fail_on_error: false`
+- Verifique se os erros são warnings (⚠️) ou errors (❌)
+- Errors devem fazer o CI falhar
+
+### Lint funciona local mas não no CI
+
+- Verifique se `eslint.config.js` está commitado
+- Verifique se todas as dependências estão no `package.json`
+- Compare as versões do Node (local vs CI)
 
 ## Customização
 
