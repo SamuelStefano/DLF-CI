@@ -24,25 +24,197 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Reviewdog (ESLint inline comments)
+      - name: Lint (gerar relatório)
         id: lint
-        uses: reviewdog/action-eslint@v1
-        continue-on-error: true
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          reporter: github-pr-review
-          filter_mode: diff_context
-          fail_on_error: true
-          eslint_flags: "--config eslint.config.js ."
+        run: npx eslint --config eslint.config.js . -f json -o eslint-report.json || true
+
+      - name: Checagem de arquitetura
+        id: architecture
+        run: |
+          node -e "
+          const fs = require('fs');
+          const path = require('path');
+          const { checkArchitecture } = require('./.github/workflows/architecture-check.js');
+          
+          const files = fs.readdirSync('.', { recursive: true })
+            .filter(f => /\.(ts|tsx)$/.test(f) && !f.includes('node_modules'));
+          
+          const issues = [];
+          files.forEach(file => {
+            const content = fs.readFileSync(file, 'utf8');
+            const fileIssues = checkArchitecture(file, content);
+            fileIssues.forEach(issue => {
+              issues.push({ file, ...issue });
+            });
+          });
+          
+          fs.writeFileSync('architecture-report.json', JSON.stringify(issues));
+          " || true
 
       - name: Typecheck
         id: typecheck
         run: npm run typecheck
         continue-on-error: true
 
-      - name: Fail if lint or typecheck failed
-        if: ${{ steps.lint.outcome == 'failure' || steps.typecheck.outcome == 'failure' }}
-        run: exit 1
+      - name: Comentar erros inline
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            if (!fs.existsSync('eslint-report.json')) {
+              console.log('Nenhum relatório de lint encontrado');
+              return;
+            }
+
+            const report = JSON.parse(fs.readFileSync('eslint-report.json', 'utf8'));
+            const files = report.filter(f => f.messages.length > 0);
+            
+            if (files.length === 0) {
+              console.log('Nenhum erro de lint encontrado');
+              return;
+            }
+
+            const translateMessage = (ruleId, message) => {
+              const translations = {
+                // TypeScript
+                '@typescript-eslint/no-unused-vars': `**Variável não utilizada**: ${message.split("'")[1] || 'esta variável'} foi declarada mas nunca é usada. Remova-a ou adicione um underscore no início se for intencional.`,
+                '@typescript-eslint/no-unused-expressions': '**Expressão sem efeito**: Esta linha não faz nada útil. Você esqueceu de atribuir a uma variável ou chamar uma função?',
+                '@typescript-eslint/no-explicit-any': '**Tipo `any` detectado**: Evite usar `any`. Defina o tipo correto ou use `unknown` se necessário.',
+                '@typescript-eslint/no-var-requires': '**Use import ES6**: Substitua `require()` por `import` para consistência.',
+                
+                // Comentários
+                'no-inline-comments': '**Comentário inline**: Evite comentários na mesma linha do código. Coloque o comentário na linha de cima para melhor legibilidade.',
+                'line-comment-position': '**Posição do comentário**: Comentários devem ficar acima do código, não ao lado.',
+                'no-warning-comments': '**Comentário de alerta**: Remova TODOs, FIXMEs e comentários temporários antes de commitar.',
+                'spaced-comment': '**Formatação de comentário**: Adicione um espaço após `//` ou `/*`.',
+                
+                // Qualidade de código e componentização
+                'max-lines': `**Arquivo muito longo**: Este arquivo tem mais de 150 linhas. Considere dividir em componentes ou módulos menores.`,
+                'max-lines-per-function': '**Componente/função muito longo**: Esta função tem mais de 100 linhas. Divida em funções/componentes menores ou extraia lógica para hooks customizados.',
+                'max-statements': '**Muitas declarações**: Esta função tem muitas variáveis/statements. Considere extrair lógica para hooks customizados ou dividir o componente.',
+                'max-params': '**Muitos parâmetros**: Esta função recebe muitos parâmetros. Use um objeto de configuração ou divida a função.',
+                'complexity': '**Complexidade alta**: Esta função é muito complexa. Divida em funções menores e mais simples.',
+                'max-depth': '**Aninhamento excessivo**: Muitos níveis de `if`/`for` aninhados. Simplifique a lógica ou extraia funções.',
+                'max-nested-callbacks': '**Callbacks aninhados**: Muitos callbacks dentro de callbacks. Use async/await ou extraia funções.',
+                'no-console': '**Console detectado**: Remova `console.log` antes de commitar. Use um logger adequado.',
+                
+                // Next.js
+                '@next/next/no-html-link-for-pages': '**Use next/link**: Substitua `<a href>` por `<Link>` do Next.js para navegação entre páginas.',
+                '@next/next/no-img-element': '**Use next/image**: Substitua `<img>` por `<Image>` do Next.js para otimização automática.',
+                '@next/next/no-sync-scripts': '**Script síncrono**: Use `<Script>` do Next.js com strategy adequada (beforeInteractive, afterInteractive, lazyOnload).',
+                '@next/next/no-page-custom-font': '**Fonte customizada**: Use `next/font` para otimização automática de fontes.',
+                
+                // Organização
+                '@typescript-eslint/consistent-type-definitions': '**Use interface**: Prefira `interface` em vez de `type` para definições de objetos (melhor para extends e merge).',
+                
+                // React
+                'react/jsx-key': '**Faltou `key` prop**: Elementos em arrays/iterações precisam de uma prop `key` única. Exemplo: `<div key={item.id}>`',
+                'react/jsx-no-duplicate-props': '**Props duplicadas**: Você declarou a mesma prop mais de uma vez neste componente.',
+                'react/jsx-no-undef': `**Componente não definido**: ${message.split("'")[1] || 'Este componente'} não foi importado ou não existe.`,
+                'react/no-children-prop': '**Uso incorreto de children**: Use `<Componente>conteúdo</Componente>` em vez de `<Componente children="conteúdo" />`.',
+                'react/no-danger-with-children': '**Conflito perigoso**: Não use `dangerouslySetInnerHTML` junto com children.',
+                'react/no-deprecated': '**API descontinuada**: Este recurso do React está deprecated. Verifique a documentação para alternativas.',
+                'react/no-direct-mutation-state': '**Mutação direta de state**: Nunca altere `this.state` diretamente. Use `setState()`.',
+                'react/no-unescaped-entities': '**Entidade não escapada**: Use `&quot;`, `&apos;`, `&gt;`, `&lt;` ou coloque o texto dentro de `{}`.',
+                'react/self-closing-comp': '**Tag não auto-fechada**: Componentes sem children devem usar `<Componente />` em vez de `<Componente></Componente>`.',
+                
+                // React Hooks
+                'react-hooks/rules-of-hooks': '**Regra de Hooks violada**: Hooks só podem ser chamados no nível superior de componentes funcionais. Não use dentro de condições, loops ou funções aninhadas.',
+                'react-hooks/exhaustive-deps': '**Dependências faltando**: O array de dependências do Hook está incompleto. Adicione todas as variáveis usadas dentro do Hook ou remova o Hook se não for necessário.',
+              };
+              
+              return translations[ruleId] || `**${ruleId}**: ${message}`;
+            };
+
+            const { owner, repo } = context.repo;
+            const pr_number = context.payload.pull_request?.number;
+            
+            if (!pr_number) {
+              console.log('Não é um pull request, pulando comentários');
+              return;
+            }
+
+            // Buscar arquivos modificados no PR
+            const { data: prFiles } = await github.rest.pulls.listFiles({
+              owner,
+              repo,
+              pull_number: pr_number,
+            });
+
+            const modifiedFiles = new Set(prFiles.map(f => f.filename));
+
+            for (const file of files) {
+              const relativePath = path.relative(process.cwd(), file.filePath);
+              
+              // Só comenta em arquivos que foram modificados
+              if (!modifiedFiles.has(relativePath)) continue;
+
+              for (const msg of file.messages) {
+                const translatedMessage = translateMessage(msg.ruleId, msg.message);
+                const severity = msg.severity === 2 ? '🚫 ERRO' : '⚠️ ATENÇÃO';
+                
+                const body = `${severity}\n\n${translatedMessage}\n\n---\n<sub>Regra: \`${msg.ruleId}\`</sub>`;
+
+                try {
+                  await github.rest.pulls.createReviewComment({
+                    owner,
+                    repo,
+                    pull_number: pr_number,
+                    body,
+                    commit_id: context.payload.pull_request.head.sha,
+                    path: relativePath,
+                    line: msg.line,
+                  });
+                } catch (error) {
+                  console.log(`Erro ao comentar em ${relativePath}:${msg.line}: ${error.message}`);
+                }
+              }
+            }
+
+            // Processar issues de arquitetura
+            if (fs.existsSync('architecture-report.json')) {
+              const archIssues = JSON.parse(fs.readFileSync('architecture-report.json', 'utf8'));
+              
+              for (const issue of archIssues) {
+                if (!modifiedFiles.has(issue.file)) continue;
+                
+                const severity = issue.severity === 'error' ? '🚫 ERRO' : '💡 SUGESTÃO';
+                const body = `${severity}\n\n${issue.message}\n\n---\n<sub>Análise de Arquitetura</sub>`;
+                
+                try {
+                  await github.rest.pulls.createReviewComment({
+                    owner,
+                    repo,
+                    pull_number: pr_number,
+                    body,
+                    commit_id: context.payload.pull_request.head.sha,
+                    path: issue.file,
+                    line: issue.line,
+                  });
+                } catch (error) {
+                  console.log(`Erro ao comentar arquitetura em ${issue.file}:${issue.line}: ${error.message}`);
+                }
+              }
+            }
+
+      - name: Verificar se CI falhou
+        if: always()
+        run: |
+          if [ -f eslint-report.json ]; then
+            ERRORS=$(node -e "const r = require('./eslint-report.json'); console.log(r.reduce((acc, f) => acc + f.errorCount, 0))")
+            if [ "$ERRORS" -gt 0 ]; then
+              echo "❌ Encontrados $ERRORS erros de lint"
+              exit 1
+            fi
+          fi
+          if [ "${{ steps.typecheck.outcome }}" == "failure" ]; then
+            echo "❌ Typecheck falhou"
+            exit 1
+          fi
 
   comment:
     needs: ci

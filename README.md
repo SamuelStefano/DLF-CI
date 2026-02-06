@@ -1,26 +1,92 @@
 # DLF-CI
 
-Workflow de CI reutilizável para validar código em pull requests: roda lint e typecheck, comenta erros inline com Reviewdog, e notifica falhas.
+Workflow de CI reutilizável otimizado para **Next.js + TypeScript + Supabase**.
+
+Valida código em pull requests, comenta erros inline em português, e **sugere melhorias de arquitetura e componentização**.
+
+## 🎯 Principais recursos
+
+- ✅ **Lint + Typecheck** automáticos
+- 🇧🇷 **Comentários 100% em português** com contexto específico
+- 🏗️ **Análise de arquitetura** - detecta problemas de organização
+- 🔍 **Sugestões de componentização** - identifica quando dividir componentes
+- 📦 **Detecção de hooks customizados** - sugere extrair lógica
+- 🗂️ **Organização de código** - alerta sobre types, constants e queries mal posicionados
+- ⚡ **Next.js otimizado** - valida uso de Link, Image, Script
+- 🔒 **Supabase patterns** - detecta queries fora de lib/
 
 ## O que faz
 
-1. **Lint com ESLint** — Reviewdog roda ESLint e comenta erros inline no PR
+1. **Lint com ESLint** — valida código e comenta erros inline no PR **em português**
 2. **Typecheck** — verifica tipos TypeScript
-3. **Notificação de falha** — bot comenta no PR se algo quebrar
+3. **Comentários específicos** — mensagens traduzidas e com contexto claro
+4. **Notificação de falha** — bot comenta no PR se algo quebrar
 
-**Regras de qualidade (warnings):**
+**Regras de qualidade:**
+
+*Qualidade de código:*
 - ⚠️ Arquivos com mais de 150 linhas
+- ⚠️ Funções muito complexas (complexidade > 10)
+- ⚠️ Aninhamento excessivo de if/for
+- ⚠️ Callbacks aninhados (prefira async/await)
+
+*TypeScript:*
+- ⚠️ Variáveis não utilizadas
+- ⚠️ Uso de `any`
+- ⚠️ Imports desnecessários
+
+*Código limpo:*
 - ⚠️ Comentários no código (inline ou mal posicionados)
-- ⚠️ Regras TypeScript recomendadas (unused vars, any, etc)
+- ⚠️ TODOs/FIXMEs commitados
+- ⚠️ `console.log` no código
+
+*React/Hooks:*
+- 🚫 Faltou prop `key` em listas
+- 🚫 Componente não importado
+- 🚫 Hooks usados incorretamente (condições, loops)
+- ⚠️ Dependências faltando em useEffect/useCallback
+- ⚠️ Componentes sem auto-closing
+
+*Next.js:*
+- 🚫 Uso de `<a>` em vez de `<Link>`
+- ⚠️ Uso de `<img>` em vez de `<Image>`
+- 🚫 Scripts síncronos sem `<Script>`
+- ⚠️ Fontes customizadas sem `next/font`
+
+*Arquitetura e Componentização:*
+- 💡 Types/Interfaces inline (mova para `@/types`)
+- 💡 Constantes dispersas (centralize em `@/constants`)
+- 💡 Muitos `useState` (5+) - extraia para hook customizado
+- 💡 Funções usando hooks - transforme em custom hook em `@/hooks`
+- 💡 Queries do Supabase no componente (mova para `@/lib/supabase`)
+- 💡 Muito JSX (50+ linhas) - divida em subcomponentes
+- 💡 `fetch` direto no componente (use `@/lib/api` ou hook)
+- ⚠️ Componente/função com 100+ linhas
+- ⚠️ Função com 3+ parâmetros (use objeto de config)
 
 **Comportamento:**
 - ✅ Sucesso → CI passa em silêncio
-- ❌ Falha → comentários inline do Reviewdog + comentário de resumo do bot
+- ❌ Falha → comentários inline **em português** + comentário de resumo do bot
 
-**Como funciona:**
-- O Reviewdog executa o ESLint automaticamente nos arquivos modificados
-- Comentários aparecem inline nas linhas com erro
-- Não precisa configurar output JSON ou relatórios
+**Diferencial:**
+- Mensagens **100% em português** com contexto específico
+- **Análise de arquitetura** além das regras do ESLint
+- Detecta problemas de organização (types, constants, hooks)
+- Sugere extrações e refatorações (hooks customizados, subcomponentes)
+- Focado em Next.js + TypeScript + Supabase
+
+Exemplo: em vez de "Expected an assignment or function call", aparece:
+> 🚫 ERRO
+> 
+> **Expressão sem efeito**: Esta linha não faz nada útil. Você esqueceu de atribuir a uma variável ou chamar uma função?
+
+Exemplo de análise de arquitetura:
+> 💡 SUGESTÃO
+>
+> **Componentização: Muitos states (7)**: Este componente tem muitos states. Considere:
+> - Extrair lógica para um hook customizado em `@/hooks`
+> - Dividir em componentes menores
+> - Usar useReducer se os states estão relacionados
 
 ## Como usar em outro repositório
 
@@ -129,6 +195,14 @@ npm install
 
 Pronto. Abra um PR e o CI vai rodar automaticamente.
 
+### 6. (Opcional) Adicionar badge de status
+
+Adicione no README.md do seu repo para mostrar o status do CI:
+
+```markdown
+![CI](https://github.com/SEU-USUARIO/SEU-REPO/actions/workflows/ci.yml/badge.svg)
+```
+
 ## Requisitos
 
 - Node.js 20+
@@ -154,20 +228,110 @@ seu-repo/
     └── *.ts ou *.tsx (seu código TypeScript)
 ```
 
-## Exemplo de falha
+## Exemplo de comentários
 
-### Comentários inline (Reviewdog)
+### Comentários inline (em português)
 
-Se houver erros de lint, o Reviewdog comenta diretamente nas linhas:
+Quando houver erros, o bot comenta diretamente nas linhas problemáticas:
 
+**Exemplo 1: Variável não usada**
 ```
-exemplo.ts linha 15:
-⚠️ File has too many lines (152). Maximum allowed is 150
+🚫 ERRO
+
+Variável não utilizada: 'resultado' foi declarada mas nunca é usada. 
+Remova-a ou adicione um underscore no início se for intencional.
+
+---
+Regra: @typescript-eslint/no-unused-vars
 ```
 
+**Exemplo 2: Expressão sem efeito**
 ```
-exemplo.ts linha 3:
-⚠️ Unexpected comment inline with code
+🚫 ERRO
+
+Expressão sem efeito: Esta linha não faz nada útil. 
+Você esqueceu de atribuir a uma variável ou chamar uma função?
+
+---
+Regra: @typescript-eslint/no-unused-expressions
+```
+
+**Exemplo 3: Arquivo muito longo**
+```
+⚠️ ATENÇÃO
+
+Arquivo muito longo: Este arquivo tem mais de 150 linhas. 
+Considere dividir em componentes ou módulos menores.
+
+---
+Regra: max-lines
+```
+
+**Exemplo 4: Comentário inline**
+```
+⚠️ ATENÇÃO
+
+Comentário inline: Evite comentários na mesma linha do código. 
+Coloque o comentário na linha de cima para melhor legibilidade.
+
+---
+Regra: no-inline-comments
+```
+
+### Sugestões de arquitetura (além do ESLint)
+
+O CI também analisa a estrutura do código e sugere melhorias:
+
+**Exemplo 5: Muitos states**
+```
+💡 SUGESTÃO
+
+Componentização: Muitos states (7): Este componente tem muitos states. Considere:
+- Extrair lógica para um hook customizado em @/hooks
+- Dividir em componentes menores
+- Usar useReducer se os states estão relacionados
+
+---
+Análise de Arquitetura
+```
+
+**Exemplo 6: Query do Supabase no componente**
+```
+💡 SUGESTÃO
+
+Organização: Query do Supabase no componente: Extraia queries do Supabase 
+para funções em @/lib/supabase ou em um hook customizado. 
+Componentes não devem ter lógica de banco.
+
+---
+Análise de Arquitetura
+```
+
+**Exemplo 7: Types inline**
+```
+💡 SUGESTÃO
+
+Organização: Type/Interface inline: Mova types e interfaces para a pasta 
+@/types ou para um arquivo .types.ts no mesmo diretório.
+
+---
+Análise de Arquitetura
+```
+
+**Exemplo 8: Hook customizado detectado**
+```
+💡 SUGESTÃO
+
+Hook customizado detectado: A função handleUserData usa hooks internamente 
+mas não está em @/hooks. Transforme em um hook customizado:
+
+// @/hooks/use-handle-user-data.ts
+export function useHandleUserData() {
+  // lógica aqui
+}
+
+---
+Análise de Arquitetura
 ```
 
 ### Comentário de resumo (Bot)
@@ -182,29 +346,56 @@ Se o CI falhar completamente, o bot adiciona um comentário no PR:
 
 ## Troubleshooting
 
-### Reviewdog não está comentando
+### Bot não está comentando
 
 1. **Verifique se há erros de lint:** Rode `npx eslint --config eslint.config.js .` localmente
 2. **Verifique as permissões:** O workflow precisa de `pull-requests: write`
-3. **Verifique se o eslint.config.js existe:** Reviewdog usa `--config eslint.config.js .`
-4. **Verifique os arquivos modificados:** Reviewdog só comenta em arquivos que foram alterados no PR
+3. **Verifique se o eslint.config.js existe:** O bot usa `--config eslint.config.js .`
+4. **Verifique os arquivos modificados:** Só comenta em arquivos que foram alterados no PR
+5. **Verifique os logs do workflow:** Procure por erros na etapa "Comentar erros inline"
 
 ### CI passa mas há erros no código
 
-- O Reviewdog pode gerar warnings sem falhar o CI se `fail_on_error: false`
-- Verifique se os erros são warnings (⚠️) ou errors (❌)
-- Errors devem fazer o CI falhar
+- Warnings (⚠️) não fazem o CI falhar, apenas comentam
+- Errors (🚫) fazem o CI falhar
+- Verifique se são warnings ou errors no output do ESLint local
 
 ### Lint funciona local mas não no CI
 
 - Verifique se `eslint.config.js` está commitado
 - Verifique se todas as dependências estão no `package.json`
 - Compare as versões do Node (local vs CI)
+- Rode `npm ci` localmente para testar com as mesmas dependências do CI
+
+### Adicionar novas traduções
+
+Para adicionar traduções de novas regras do ESLint, edite o workflow `.github/workflows/ci.yml` e adicione entradas no objeto `translations` dentro do script `Comentar erros inline`.
 
 ## Customização
 
-Se quiser adaptar o workflow (mudar Node version, adicionar testes, etc), fork este repo e edite `.github/workflows/ci.yml`.
+Quer ajustar regras, desabilitar React, adicionar Prettier ou mudar limites?
+
+👉 **[Veja o guia completo de customização](CUSTOMIZATION.md)**
+
+Tópicos incluídos:
+- Ajustar severidade (warning → error)
+- Desabilitar regras específicas
+- Customizar limites (linhas, complexidade)
+- Configurar apenas TypeScript (sem React)
+- Integrar Prettier
+- Adicionar novas traduções
 
 ---
+
+**Arquivos importantes:**
+- 📋 [CHANGELOG.md](CHANGELOG.md) - histórico de mudanças e regras incluídas
+- ⚙️ [CUSTOMIZATION.md](CUSTOMIZATION.md) - guia de personalização
+- 🏗️ [ARCHITECTURE.md](ARCHITECTURE.md) - guia de arquitetura e componentização
+- 📖 README.md (este arquivo) - como usar
+
+**Recomendado para iniciantes:**
+1. Leia este README para configurar o CI
+2. Consulte [ARCHITECTURE.md](ARCHITECTURE.md) para entender a estrutura recomendada
+3. Use [CUSTOMIZATION.md](CUSTOMIZATION.md) para ajustar regras conforme necessário
 
 **Dúvidas?** Veja os arquivos deste repo como referência de setup funcional.

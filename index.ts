@@ -1,3 +1,1 @@
-const message: string = 'DLF-CI';
-
-console.log(message);
+export const CI_NAME = 'DLF-CI';
