@@ -1,0 +1,282 @@
+name: DLF Code Review Agent
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Checkout do repo do aluno (caller)
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # 2. Checkout do DLF-CI para subpasta (scripts de checagem)
+      - name: Checkout DLF-CI
+        uses: actions/checkout@v4
+        with:
+          repository: SamuelStefano/DLF-CI
+          ref: main
+          path: _dlf-ci
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (gerar relatório)
+        id: lint
+        run: npx eslint --config eslint.config.js . --ignore-pattern '_dlf-ci/' -f json -o eslint-report.json || true
+
+      - name: Checagem de arquitetura
+        id: architecture
+        run: |
+          node -e "
+          const fs = require('fs');
+          const path = require('path');
+
+          const checkerPath = './_dlf-ci/.github/workflows/architecture-check.js';
+          if (!fs.existsSync(checkerPath)) {
+            console.log('⚠️ architecture-check.js não encontrado');
+            fs.writeFileSync('architecture-report.json', '[]');
+            process.exit(0);
+          }
+
+          const { checkArchitecture } = require(checkerPath);
+
+          const files = fs.readdirSync('.', { recursive: true })
+            .filter(f => /\.(ts|tsx)$/.test(f) && !f.includes('node_modules') && !f.includes('_dlf-ci') && !f.includes('.d.ts'));
+
+          const issues = [];
+          files.forEach(file => {
+            const content = fs.readFileSync(file, 'utf8');
+            checkArchitecture(file, content).forEach(issue => {
+              issues.push({ file, ...issue });
+            });
+          });
+
+          fs.writeFileSync('architecture-report.json', JSON.stringify(issues, null, 2));
+          console.log('📊 Análise de arquitetura: ' + issues.length + ' issues');
+          " || true
+
+      - name: Typecheck
+        id: typecheck
+        run: npm run typecheck 2>&1 | tee typecheck-output.txt
+        continue-on-error: true
+
+      - name: 🤖 DLF Agent — Review nos arquivos (Files changed)
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const { owner, repo } = context.repo;
+            const pr_number = context.payload.pull_request?.number;
+            const commit_id = context.payload.pull_request?.head?.sha;
+
+            if (!pr_number || !commit_id) {
+              console.log('Não é um pull request, pulando review');
+              return;
+            }
+
+            function normPath(p) { return p.replace(/\\/g, '/'); }
+
+            const { data: prFiles } = await github.rest.pulls.listFiles({ owner, repo, pull_number: pr_number });
+            const modifiedFiles = new Set(prFiles.map(f => f.filename));
+
+            // Mapa de linhas no diff
+            const diffLines = new Map();
+            for (const file of prFiles) {
+              const lines = new Set();
+              if (file.patch) {
+                let currentLine = 0;
+                for (const patchLine of file.patch.split('\n')) {
+                  const hunkMatch = patchLine.match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
+                  if (hunkMatch) { currentLine = parseInt(hunkMatch[1], 10); continue; }
+                  if (patchLine.startsWith('+')) { lines.add(currentLine); currentLine++; }
+                  else if (patchLine.startsWith('-')) { /* nada */ }
+                  else { lines.add(currentLine); currentLine++; }
+                }
+              }
+              diffLines.set(file.filename, lines);
+            }
+
+            function isLineInDiff(filePath, line) {
+              const fileLines = diffLines.get(normPath(filePath));
+              if (!fileLines || fileLines.size === 0) return true;
+              return fileLines.has(line);
+            }
+
+            // Traduções curtas
+            const translateMessage = (ruleId, message) => {
+              const v = message.split("'")[1] || '';
+              const t = {
+                '@typescript-eslint/no-unused-vars': `🧹 **Não utilizado**: \`${v || 'variável'}\` — remova ou prefixe com \`_\`.`,
+                '@typescript-eslint/no-unused-expressions': '🧹 **Expressão sem efeito** — falta atribuição ou chamada?',
+                '@typescript-eslint/no-explicit-any': '📐 **Evite `any`** — defina o tipo ou use `unknown`.',
+                '@typescript-eslint/no-var-requires': '📦 **Use `import`** em vez de `require()`.',
+                '@typescript-eslint/consistent-type-definitions': '📐 **Use `interface`** em vez de `type`.',
+                'no-console': '🧹 **console detectado** — remova. Use Toast para feedback.',
+                'react/jsx-key': '🔑 **Faltou `key`** em lista.',
+                'react/jsx-no-undef': `🚫 **\`${v || 'Componente'}\` não definido** — verifique o import.`,
+                'react-hooks/rules-of-hooks': '🚫 **Hooks** só no nível superior.',
+                'react-hooks/exhaustive-deps': '⚠️ **Dependências faltando** no hook.',
+                '@next/next/no-html-link-for-pages': '⚡ Use `<Link>` do Next.js.',
+                '@next/next/no-img-element': '⚡ Use `<Image>` do Next.js.',
+                'react/self-closing-comp': '🧹 Use `<Comp />` sem children.',
+                'complexity': '🧠 **Complexidade alta** — simplifique.',
+                'max-depth': '🧠 **Aninhamento excessivo** — use early returns.',
+                'max-nested-callbacks': '🧠 **Callbacks aninhados** — use async/await.',
+              };
+              return t[ruleId] || `**${ruleId}**: ${message}`;
+            };
+
+            const reviewComments = [];
+            let hasLintErrors = false;
+
+            // Regras que o architecture-check já cobre consolidado
+            const SKIP = new Set([
+              'no-console', 'no-inline-comments', 'line-comment-position',
+              'no-warning-comments', 'spaced-comment', 'max-lines',
+              'max-lines-per-function', 'max-statements', 'max-params',
+              '@typescript-eslint/no-unused-vars',
+            ]);
+
+            // ESLint
+            if (fs.existsSync('eslint-report.json')) {
+              const report = JSON.parse(fs.readFileSync('eslint-report.json', 'utf8'));
+              for (const file of report.filter(f => f.messages.length > 0)) {
+                const rel = normPath(path.relative(process.cwd(), file.filePath));
+                if (!modifiedFiles.has(rel)) continue;
+                for (const msg of file.messages) {
+                  if (!isLineInDiff(rel, msg.line)) continue;
+                  if (msg.severity === 2) hasLintErrors = true;
+                  if (SKIP.has(msg.ruleId)) continue;
+                  reviewComments.push({
+                    path: rel, line: msg.line,
+                    body: `${translateMessage(msg.ruleId, msg.message)}\n\n<sub>🤖 DLF Review Agent</sub>`,
+                  });
+                }
+              }
+            }
+
+            // Arquitetura
+            const fileLevelIssues = [];
+            if (fs.existsSync('architecture-report.json')) {
+              for (const issue of JSON.parse(fs.readFileSync('architecture-report.json', 'utf8'))) {
+                const fp = normPath(issue.file);
+                if (!modifiedFiles.has(fp)) continue;
+                if (issue.fileLevel) { fileLevelIssues.push({ file: fp, ...issue }); continue; }
+                if (!isLineInDiff(fp, issue.line)) continue;
+                reviewComments.push({
+                  path: fp, line: issue.line,
+                  body: `💡 ${issue.message}\n\n<sub>🤖 DLF Review Agent</sub>`,
+                });
+              }
+            }
+
+            // Deduplicar por file+line
+            const grouped = new Map();
+            for (const c of reviewComments) {
+              const key = `${c.path}::${c.line}`;
+              if (grouped.has(key)) { grouped.get(key).body += '\n\n---\n\n' + c.body; }
+              else { grouped.set(key, { ...c }); }
+            }
+            const dedupedComments = [...grouped.values()];
+
+            // Montar review
+            const event = hasLintErrors ? 'REQUEST_CHANGES' : 'COMMENT';
+            let bodyParts = [];
+            if (dedupedComments.length > 0 || fileLevelIssues.length > 0) {
+              bodyParts.push(`🤖 **DLF Code Review Agent** — ${dedupedComments.length} comentário(s) nos arquivos.`);
+              if (fileLevelIssues.length > 0) {
+                bodyParts.push('', '**Observações gerais:**');
+                for (const i of fileLevelIssues) bodyParts.push(`- ${i.message}`);
+              }
+              bodyParts.push('', 'Revise em **Files changed** e aprove quando estiver ok.');
+            } else {
+              bodyParts.push('🤖 **DLF Code Review Agent**: Nenhum problema encontrado. ✅');
+            }
+
+            try {
+              await github.rest.pulls.createReview({
+                owner, repo, pull_number: pr_number, commit_id, event,
+                body: bodyParts.join('\n'), comments: dedupedComments,
+              });
+              console.log('✅ Review: ' + dedupedComments.length + ' inline + ' + fileLevelIssues.length + ' file-level');
+            } catch (error) {
+              console.error('Erro:', error.message);
+              if (error.response) console.error(JSON.stringify(error.response.data, null, 2));
+            }
+
+      - name: 🤖 DLF Agent — Resumo da Review
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const { owner, repo } = context.repo;
+            const pr_number = context.payload.pull_request?.number;
+            if (!pr_number) return;
+
+            let lintErrors = 0, lintWarnings = 0;
+            if (fs.existsSync('eslint-report.json')) {
+              for (const f of JSON.parse(fs.readFileSync('eslint-report.json', 'utf8'))) {
+                lintErrors += f.errorCount; lintWarnings += f.warningCount;
+              }
+            }
+
+            let archIssues = [];
+            if (fs.existsSync('architecture-report.json'))
+              archIssues = JSON.parse(fs.readFileSync('architecture-report.json', 'utf8'));
+
+            const typecheckFailed = '${{ steps.typecheck.outcome }}' === 'failure';
+            const total = lintErrors + lintWarnings + archIssues.length + (typecheckFailed ? 1 : 0);
+
+            if (total === 0 && !typecheckFailed) {
+              const body = '## 🤖 DLF Code Review Agent\n\n### ✅ PR impecável! Parabéns!\n\nNenhum problema encontrado.\n\n---\n<sub>🤖 DLF Code Review Agent v2.0</sub>';
+              const marker = '## 🤖 DLF Code Review Agent';
+              const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr_number });
+              const existing = comments.find(c => c.user?.login === 'github-actions[bot]' && c.body?.includes(marker));
+              if (existing) await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              else await github.rest.issues.createComment({ owner, repo, issue_number: pr_number, body });
+              return;
+            }
+
+            const s = ['## 🤖 DLF Code Review Agent', '', '| Categoria | Qtd | Status |', '|-----------|:---:|:------:|'];
+            if (lintErrors > 0) s.push(`| 🚫 Erros de Lint | ${lintErrors} | Bloqueia merge |`);
+            if (lintWarnings > 0) s.push(`| ⚠️ Avisos de Lint | ${lintWarnings} | Corrigir recomendado |`);
+            if (typecheckFailed) s.push('| 🔴 TypeScript | Erros | Bloqueia merge |');
+            if (archIssues.length > 0) s.push(`| 💡 Arquitetura | ${archIssues.length} | Recomendado |`);
+            s.push('', '**Rode localmente:** `npm run lint` e `npm run typecheck`', '', '---', '<sub>🤖 DLF Code Review Agent v2.0</sub>');
+
+            const body = s.join('\n');
+            const marker = '## 🤖 DLF Code Review Agent';
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr_number });
+            const existing = comments.find(c => c.user?.login === 'github-actions[bot]' && c.body?.includes(marker));
+            if (existing) await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            else await github.rest.issues.createComment({ owner, repo, issue_number: pr_number, body });
+
+      - name: Verificar se CI falhou
+        if: always()
+        run: |
+          FAILED=0
+          if [ -f eslint-report.json ]; then
+            ERRORS=$(node -e "const r=require('./eslint-report.json');console.log(r.reduce((a,f)=>a+f.errorCount,0))")
+            [ "$ERRORS" -gt 0 ] && echo "❌ $ERRORS erros de lint" && FAILED=1
+          fi
+          [ "${{ steps.typecheck.outcome }}" == "failure" ] && echo "❌ TypeCheck falhou" && FAILED=1
+          [ "$FAILED" -eq 1 ] && exit 1
+          echo "✅ CI passou!"

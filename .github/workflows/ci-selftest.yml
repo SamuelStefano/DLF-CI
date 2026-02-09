@@ -1,0 +1,13 @@
+name: CI (self-test)
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    uses: ./.github/workflows/ci-reusable.yml
+    secrets: inherit
