@@ -244,12 +244,24 @@ jobs:
               }
             }
 
-            // ── Submeter UMA review com todos os comentários (aparece em "Files changed" e o revisor pode aprovar) ──
+            // ── Deduplicar: agrupar comentários da mesma linha em um só ──
+            const grouped = new Map();
+            for (const c of reviewComments) {
+              const key = `${c.path}::${c.line}`;
+              if (grouped.has(key)) {
+                const existing = grouped.get(key);
+                existing.body += '\n\n---\n\n' + c.body;
+              } else {
+                grouped.set(key, { ...c });
+              }
+            }
+            const dedupedComments = [...grouped.values()];
+
             // COMMENT quando tem avisos/sugestões, REQUEST_CHANGES quando tem erros de lint
             // Nunca usa APPROVE (GitHub Actions não tem permissão para aprovar PRs)
             const event = hasLintErrors ? 'REQUEST_CHANGES' : 'COMMENT';
-            const reviewBody = reviewComments.length > 0
-              ? `🤖 **DLF Code Review Agent** analisou este PR e deixou ${reviewComments.length} comentário(s) nas linhas dos arquivos. Revise em **Files changed** e aprove quando estiver ok.`
+            const reviewBody = dedupedComments.length > 0
+              ? `🤖 **DLF Code Review Agent** analisou este PR e deixou **${dedupedComments.length}** comentário(s) nas linhas dos arquivos.\n\nRevise em **Files changed** e aprove quando estiver ok.`
               : '🤖 **DLF Code Review Agent**: Nenhum problema encontrado nos arquivos alterados. ✅';
 
             try {
@@ -260,9 +272,9 @@ jobs:
                 commit_id,
                 event,
                 body: reviewBody,
-                comments: reviewComments,
+                comments: dedupedComments,
               });
-              console.log('✅ Review submetida: ' + reviewComments.length + ' comentário(s) em Files changed (event: ' + event + ')');
+              console.log('✅ Review submetida: ' + dedupedComments.length + ' comentário(s) em Files changed (event: ' + event + ')');
             } catch (error) {
               console.error('Erro ao submeter review:', error.message);
               if (error.response) console.error('Detalhes:', JSON.stringify(error.response.data, null, 2));
