@@ -173,11 +173,24 @@ jobs:
               return translations[ruleId] || `**${ruleId}**: ${message}`;
             };
 
-            // ── Coletar TODOS os comentários para enviar numa única Review (aparece em Files changed) ──
+            // ── Coletar TODOS os comentários para enviar numa única Review ──
             const reviewComments = [];
             let hasLintErrors = false;
 
-            // ESLint
+            // Regras ESLint que o architecture-check já cobre de forma consolidada
+            // Não gerar comentários individuais para evitar poluição
+            const SKIP_ESLINT_RULES = new Set([
+              'no-console',
+              'no-inline-comments',
+              'line-comment-position',
+              'no-warning-comments',
+              'max-lines',
+              'max-lines-per-function',
+              'max-statements',
+              'max-params',
+            ]);
+
+            // ESLint — só regras que o architecture-check NÃO cobre
             if (fs.existsSync('eslint-report.json')) {
               const report = JSON.parse(fs.readFileSync('eslint-report.json', 'utf8'));
               const filesWithErrors = report.filter(f => f.messages.length > 0);
@@ -189,6 +202,9 @@ jobs:
                 for (const msg of file.messages) {
                   if (!isLineInDiff(relativePath, msg.line)) continue;
                   if (msg.severity === 2) hasLintErrors = true;
+
+                  // Pular regras que já são cobertas pelo architecture-check consolidado
+                  if (SKIP_ESLINT_RULES.has(msg.ruleId)) continue;
 
                   const translatedMessage = translateMessage(msg.ruleId, msg.message);
 
