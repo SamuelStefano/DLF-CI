@@ -68,9 +68,9 @@ jobs:
         continue-on-error: true
 
       # ───────────────────────────────────────
-      # Comentários inline nas linhas do PR
+      # Review nas linhas do PR (Files changed) — bot submete review para o revisor aprovar
       # ───────────────────────────────────────
-      - name: 🤖 DLF Agent — Comentários inline
+      - name: 🤖 DLF Agent — Review nos arquivos (Files changed)
         if: always()
         uses: actions/github-script@v7
         with:
@@ -81,10 +81,16 @@ jobs:
 
             const { owner, repo } = context.repo;
             const pr_number = context.payload.pull_request?.number;
+            const commit_id = context.payload.pull_request?.head?.sha;
 
-            if (!pr_number) {
-              console.log('Não é um pull request, pulando comentários');
+            if (!pr_number || !commit_id) {
+              console.log('Não é um pull request ou falta commit_id, pulando review');
               return;
+            }
+
+            // Paths na API são sempre com / (formato do GitHub)
+            function normPath(p) {
+              return p.replace(/\\/g, '/');
             }
 
             // ── Buscar arquivos modificados no PR ──
@@ -93,7 +99,7 @@ jobs:
             });
             const modifiedFiles = new Set(prFiles.map(f => f.filename));
 
-            // ── Mapa de linhas no diff (para evitar comentar fora do diff) ──
+            // ── Linhas que existem no diff (lado novo do arquivo) ──
             const diffLines = new Map();
             for (const file of prFiles) {
               const lines = new Set();
@@ -110,7 +116,7 @@ jobs:
                     lines.add(currentLine);
                     currentLine++;
                   } else if (patchLine.startsWith('-')) {
-                    // Linha removida, não incrementa
+                    // nada
                   } else {
                     lines.add(currentLine);
                     currentLine++;
@@ -121,8 +127,9 @@ jobs:
             }
 
             function isLineInDiff(filePath, line) {
-              const fileLines = diffLines.get(filePath);
-              if (!fileLines || fileLines.size === 0) return true; // Se não temos info do diff, tenta comentar
+              const normalized = normPath(filePath);
+              const fileLines = diffLines.get(normalized);
+              if (!fileLines || fileLines.size === 0) return true;
               return fileLines.has(line);
             }
 
@@ -189,85 +196,75 @@ jobs:
               return translations[ruleId] || `**${ruleId}**: ${message}`;
             };
 
-            // ── Processar relatório do ESLint ──
-            let lintCommentCount = 0;
+            // ── Coletar TODOS os comentários para enviar numa única Review (aparece em Files changed) ──
+            const reviewComments = [];
+            let hasLintErrors = false;
+
+            // ESLint
             if (fs.existsSync('eslint-report.json')) {
               const report = JSON.parse(fs.readFileSync('eslint-report.json', 'utf8'));
               const filesWithErrors = report.filter(f => f.messages.length > 0);
 
               for (const file of filesWithErrors) {
-                const relativePath = path.relative(process.cwd(), file.filePath);
+                const relativePath = normPath(path.relative(process.cwd(), file.filePath));
                 if (!modifiedFiles.has(relativePath)) continue;
 
                 for (const msg of file.messages) {
                   if (!isLineInDiff(relativePath, msg.line)) continue;
+                  if (msg.severity === 2) hasLintErrors = true;
 
                   const translatedMessage = translateMessage(msg.ruleId, msg.message);
                   const severity = msg.severity === 2 ? '🚫 **ERRO**' : '⚠️ **ATENÇÃO**';
 
-                  const body = [
-                    severity,
-                    '',
-                    translatedMessage,
-                    '',
-                    '---',
-                    `<sub>Regra: \`${msg.ruleId}\` | 🤖 DLF Review Agent</sub>`,
-                  ].join('\n');
-
-                  try {
-                    await github.rest.pulls.createReviewComment({
-                      owner, repo,
-                      pull_number: pr_number,
-                      body,
-                      commit_id: context.payload.pull_request.head.sha,
-                      path: relativePath,
-                      line: msg.line,
-                    });
-                    lintCommentCount++;
-                  } catch (error) {
-                    console.log(`⚠️ Não foi possível comentar em ${relativePath}:${msg.line} — ${error.message}`);
-                  }
+                  reviewComments.push({
+                    path: relativePath,
+                    line: msg.line,
+                    body: [severity, '', translatedMessage, '', '---', `<sub>Regra: \`${msg.ruleId}\` | 🤖 DLF Review Agent</sub>`].join('\n'),
+                  });
                 }
               }
             }
 
-            // ── Processar relatório de arquitetura ──
-            let archCommentCount = 0;
+            // Arquitetura
             if (fs.existsSync('architecture-report.json')) {
               const archIssues = JSON.parse(fs.readFileSync('architecture-report.json', 'utf8'));
 
               for (const issue of archIssues) {
-                if (!modifiedFiles.has(issue.file)) continue;
-                if (!isLineInDiff(issue.file, issue.line)) continue;
+                const filePath = normPath(issue.file);
+                if (!modifiedFiles.has(filePath)) continue;
+                if (!isLineInDiff(filePath, issue.line)) continue;
 
                 const severityIcon = issue.severity === 'error' ? '🚫 **ERRO**' : '💡 **SUGESTÃO**';
 
-                const body = [
-                  severityIcon,
-                  '',
-                  issue.message,
-                  '',
-                  '---',
-                  `<sub>Categoria: \`${issue.category || 'architecture'}\` | 🤖 DLF Review Agent</sub>`,
-                ].join('\n');
-
-                try {
-                  await github.rest.pulls.createReviewComment({
-                    owner, repo,
-                    pull_number: pr_number,
-                    body,
-                    commit_id: context.payload.pull_request.head.sha,
-                    path: issue.file,
-                    line: issue.line,
-                  });
-                  archCommentCount++;
-                } catch (error) {
-                  console.log(`⚠️ Não foi possível comentar arquitetura em ${issue.file}:${issue.line} — ${error.message}`);
-                }
+                reviewComments.push({
+                  path: filePath,
+                  line: issue.line,
+                  body: [severityIcon, '', issue.message, '', '---', `<sub>Categoria: \`${issue.category || 'architecture'}\` | 🤖 DLF Review Agent</sub>`].join('\n'),
+                });
               }
             }
 
-            console.log(`✅ Comentários inline: ${lintCommentCount} lint + ${archCommentCount} arquitetura`);
+            // ── Submeter UMA review com todos os comentários (aparece em "Files changed" e o revisor pode aprovar) ──
+            const event = hasLintErrors ? 'REQUEST_CHANGES' : (reviewComments.length > 0 ? 'COMMENT' : 'APPROVE');
+            const reviewBody = reviewComments.length > 0
+              ? `🤖 **DLF Code Review Agent** analisou este PR e deixou ${reviewComments.length} comentário(s) nas linhas dos arquivos. Revise em **Files changed** e aprove quando estiver ok.`
+              : '🤖 **DLF Code Review Agent**: Nenhum problema encontrado nos arquivos alterados. ✅';
+
+            try {
+              await github.rest.pulls.createReview({
+                owner,
+                repo,
+                pull_number: pr_number,
+                commit_id,
+                event,
+                body: reviewBody,
+                comments: reviewComments,
+              });
+              console.log('✅ Review submetida: ' + reviewComments.length + ' comentário(s) em Files changed (event: ' + event + ')');
+            } catch (error) {
+              console.error('Erro ao submeter review:', error.message);
+              if (error.response) console.error('Detalhes:', JSON.stringify(error.response.data, null, 2));
+            }
 
       # ───────────────────────────────────────
       # Resumo do agente (comentário principal)
