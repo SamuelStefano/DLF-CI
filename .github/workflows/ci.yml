@@ -245,7 +245,9 @@ jobs:
             }
 
             // ── Submeter UMA review com todos os comentários (aparece em "Files changed" e o revisor pode aprovar) ──
-            const event = hasLintErrors ? 'REQUEST_CHANGES' : (reviewComments.length > 0 ? 'COMMENT' : 'APPROVE');
+            // COMMENT quando tem avisos/sugestões, REQUEST_CHANGES quando tem erros de lint
+            // Nunca usa APPROVE (GitHub Actions não tem permissão para aprovar PRs)
+            const event = hasLintErrors ? 'REQUEST_CHANGES' : 'COMMENT';
             const reviewBody = reviewComments.length > 0
               ? `🤖 **DLF Code Review Agent** analisou este PR e deixou ${reviewComments.length} comentário(s) nas linhas dos arquivos. Revise em **Files changed** e aprove quando estiver ok.`
               : '🤖 **DLF Code Review Agent**: Nenhum problema encontrado nos arquivos alterados. ✅';
