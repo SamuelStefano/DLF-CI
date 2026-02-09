@@ -1,38 +1,27 @@
 /**
- * DLF Code Review Agent — Checagem de Hooks
+ * DLF Code Review Agent — Checagem de Hooks (consolidado)
  *
- * - Custom hooks fora da pasta /hooks
- * - Funções que usam hooks mas não são hooks
- * - Componentes com muitos hooks de efeito/memo (extrair)
- * - Muitos useState (> 4)
+ * - Custom hooks fora de /hooks → 1 issue por hook
+ * - Hook extraction → fileLevel (vai pro resumo)
+ * - Muitos useState → 1 issue consolidada
  */
 
 const { CONFIG, findBlockEnd, isInFolder, isComponent } = require('./helpers');
 
-// ─────────────────────────────────────────────
-// Hooks fora de /hooks
-// ─────────────────────────────────────────────
 function checkHooksPlacement(filePath, content, lines) {
   const issues = [];
   if (isInFolder(filePath, 'hooks')) return issues;
+
+  const misplacedHooks = [];
 
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
     const funcMatch = trimmed.match(/^(?:export\s+)?(?:const|function)\s+(\w+)/);
     if (!funcMatch) continue;
-
     const funcName = funcMatch[1];
 
     if (/^use[A-Z]/.test(funcName)) {
-      issues.push({
-        line: i + 1,
-        message:
-          `🪝 **Custom hook \`${funcName}\` fora da pasta /hooks** — Mova para o lugar correto.\n\n` +
-          `💡 **Dica**: Todos os custom hooks devem ficar em \`/hooks\` para fácil localização:\n` +
-          `\`\`\`\nhooks/${funcName.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase()}.ts\n\`\`\``,
-        severity: 'warn',
-        category: 'hook-placement',
-      });
+      misplacedHooks.push({ name: funcName, line: i + 1 });
       continue;
     }
 
@@ -40,39 +29,38 @@ function checkHooksPlacement(filePath, content, lines) {
 
     const endLine = findBlockEnd(lines, i);
     const funcBody = lines.slice(i, endLine + 1).join('\n');
-
     if (/\buse[A-Z]\w*\(/.test(funcBody) && !funcName.startsWith('use')) {
-      issues.push({
-        line: i + 1,
-        message:
-          `🪝 **Função \`${funcName}\` usa hooks internamente** — Transforme em um custom hook.\n\n` +
-          `💡 **Dica**: Funções que usam \`useState\`, \`useEffect\`, etc. precisam ser hooks.\n` +
-          `Renomeie para \`use${funcName.charAt(0).toUpperCase() + funcName.slice(1)}\` e mova para:\n` +
-          `\`\`\`\nhooks/use-${funcName.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase()}.ts\n\`\`\``,
-        severity: 'warn',
-        category: 'hook-placement',
-      });
+      misplacedHooks.push({ name: funcName, line: i + 1, needsRename: true });
     }
   }
 
-  // Componentes com muitos hooks de efeito/memo
+  if (misplacedHooks.length > 0) {
+    const list = misplacedHooks.map(h =>
+      h.needsRename
+        ? `\`${h.name}\` (L${h.line}) → renomear para \`use${h.name.charAt(0).toUpperCase() + h.name.slice(1)}\``
+        : `\`${h.name}\` (L${h.line})`
+    ).join(', ');
+
+    issues.push({
+      line: misplacedHooks[0].line,
+      message: `🪝 **Hook(s) fora de /hooks**: ${list}\n\nMova para a pasta \`/hooks\` para fácil localização e reutilização.`,
+      severity: 'warn',
+      category: 'hook-placement',
+    });
+  }
+
+  // Hook extraction → fileLevel
   if (isComponent(filePath)) {
     const useEffectCount = (content.match(/useEffect\s*\(/g) || []).length;
     const useCallbackCount = (content.match(/useCallback\s*\(/g) || []).length;
     const useMemoCount = (content.match(/useMemo\s*\(/g) || []).length;
-
     const totalHooks = useEffectCount + useCallbackCount + useMemoCount;
+
     if (totalHooks >= 4) {
       issues.push({
         line: 1,
-        message:
-          `🪝 **Componente com ${totalHooks} hooks de efeito/memo** — Extraia lógica para custom hooks.\n\n` +
-          `💡 **Dica**: Quando um componente tem muitos hooks, a lógica está acoplada ao render. ` +
-          `Crie hooks customizados que encapsulem a lógica relacionada:\n` +
-          `\`\`\`tsx\n` +
-          `// Em vez de 4 hooks no componente:\n` +
-          `const { data, loading, refetch } = useMyFeature()\n` +
-          `\`\`\``,
+        fileLevel: true,
+        message: `🪝 **${totalHooks} hooks de efeito/memo** — Extraia lógica para custom hooks. Ex: \`const { data, loading } = useMyFeature()\``,
         severity: 'warn',
         category: 'hook-extraction',
       });
@@ -82,35 +70,24 @@ function checkHooksPlacement(filePath, content, lines) {
   return issues;
 }
 
-// ─────────────────────────────────────────────
-// Muitos useState
-// ─────────────────────────────────────────────
 function checkStateCount(filePath, content, lines) {
   const issues = [];
   if (!isComponent(filePath)) return issues;
 
-  const useStateMatches = [];
+  const stateNames = [];
+  let firstLine = 0;
   for (let i = 0; i < lines.length; i++) {
     if (/\buseState\b/.test(lines[i])) {
       const nameMatch = lines[i].match(/const\s*\[(\w+)/);
-      useStateMatches.push({ name: nameMatch ? nameMatch[1] : 'state', line: i + 1 });
+      stateNames.push(nameMatch ? nameMatch[1] : 'state');
+      if (!firstLine) firstLine = i + 1;
     }
   }
 
-  if (useStateMatches.length > CONFIG.MAX_USESTATE_COUNT) {
-    const stateNames = useStateMatches.map(s => `\`${s.name}\``).join(', ');
+  if (stateNames.length > CONFIG.MAX_USESTATE_COUNT) {
     issues.push({
-      line: useStateMatches[0].line,
-      message:
-        `🧠 **${useStateMatches.length} useState neste componente**: ${stateNames}\n\n` +
-        `💡 **Dica**: Muitos estados indicam um componente com responsabilidades demais. Opções:\n` +
-        `1. **Custom hook**: agrupe estados relacionados em \`hooks/use-nome.ts\`\n` +
-        `2. **useReducer**: se os estados mudam juntos, use um reducer\n` +
-        `3. **Dividir componente**: cada sub-componente gerencia seu próprio estado\n\n` +
-        `\`\`\`tsx\n` +
-        `// Em vez de 5+ useState:\n` +
-        `const { formData, errors, isSubmitting, handleChange, handleSubmit } = useMyForm()\n` +
-        `\`\`\``,
+      line: firstLine,
+      message: `🧠 **${stateNames.length} useState**: \`${stateNames.join('`, `')}\`\n\nExtraia para um custom hook ou use \`useReducer\`. Máximo recomendado: ${CONFIG.MAX_USESTATE_COUNT}.`,
       severity: 'warn',
       category: 'too-many-states',
     });

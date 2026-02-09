@@ -133,66 +133,43 @@ jobs:
               return fileLines.has(line);
             }
 
-            // ── Traduções do ESLint ──
+            // ── Traduções do ESLint — mensagens curtas e diretas ──
             const translateMessage = (ruleId, message) => {
+              const varName = message.split("'")[1] || '';
               const translations = {
-                // TypeScript
-                '@typescript-eslint/no-unused-vars': (() => {
-                  const varName = message.split("'")[1] || 'esta variável';
-                  // Detectar se é import
-                  if (message.includes('defined but never used')) {
-                    return `🧹 **Import/variável não utilizada**: \`${varName}\` foi declarada mas nunca é usada.\n\n💡 **Dica**: Imports e variáveis sem uso aumentam o bundle e poluem o código. Remova ou adicione \`_\` no início se for intencional (ex: \`_${varName}\`).\nNo VS Code: \`Ctrl+Shift+P → Organize Imports\``;
-                  }
-                  return `🧹 **Variável não utilizada**: \`${varName}\` foi declarada mas nunca é usada.\n\n💡 **Dica**: Remova variáveis que não está usando. Se precisa manter por algum motivo, adicione \`_\` no início: \`_${varName}\`.`;
-                })(),
-                '@typescript-eslint/no-unused-expressions': '🧹 **Expressão sem efeito** — Esta linha não faz nada útil.\n\n💡 **Dica**: Você esqueceu de atribuir o resultado a uma variável? Ou de chamar uma função? Verifique se não falta um `=` ou `()`.', 
-                '@typescript-eslint/no-explicit-any': '📐 **Tipo `any` detectado** — Evite `any` ao máximo.\n\n💡 **Dica**: `any` desabilita a proteção do TypeScript. Alternativas:\n- Defina o tipo correto na pasta `/interfaces`\n- Use `unknown` se realmente não sabe o tipo\n- Use generics `<T>` para flexibilidade com segurança',
-                '@typescript-eslint/no-var-requires': '📦 **Use `import` ES6** — Substitua `require()` por `import`.\n\n💡 **Dica**: `import` é o padrão moderno e permite tree-shaking (bundle menor).',
-                '@typescript-eslint/consistent-type-definitions': '📐 **Use `interface`** — Prefira `interface` em vez de `type` para objetos.\n\n💡 **Dica**: `interface` pode ser estendida e merged, é mais flexível para definições de objetos.',
-
-                // Comentários
-                'no-inline-comments': '💬 **Comentário inline** — Evite comentários na mesma linha do código.\n\n💡 **Dica**: Código limpo é autodocumentável. Se precisa explicar algo, o código provavelmente pode ser simplificado.',
-                'line-comment-position': '💬 **Posição do comentário** — Comentários devem ficar acima do código, não ao lado.\n\n💡 **Dica**: Mas antes, pergunte-se se o comentário é mesmo necessário!',
-                'no-warning-comments': '🏷️ **Comentário temporário** — Resolva TODOs e FIXMEs antes de fazer merge.\n\n💡 **Dica**: Se não pode resolver agora, crie uma Issue no GitHub e referencie no código.',
-                'spaced-comment': '💬 **Formatação de comentário** — Adicione um espaço após `//` ou `/*`.',
-
-                // Qualidade de código
-                'max-lines': `📏 **Arquivo muito longo** — Este arquivo ultrapassou o limite de **200 linhas** do padrão DLF.\n\n💡 **Dica**: Divida em:\n- Componentes menores (atoms/molecules/organisms)\n- Custom hooks em \`/hooks\`\n- Constantes em \`/consts\`\n- Types em \`/interfaces\``,
-                'max-lines-per-function': '📐 **Função muito longa** — Esta função tem muitas linhas.\n\n💡 **Dica**: Funções devem fazer UMA coisa. Extraia lógica para funções auxiliares, custom hooks ou utilitários.',
-                'max-statements': '📐 **Muitas declarações** — Função com complexidade alta.\n\n💡 **Dica**: Muitas variáveis em uma função indicam responsabilidade demais. Extraia para hooks ou funções utilitárias.',
-                'max-params': '📐 **Muitos parâmetros** — Use um objeto de configuração.\n\n💡 **Dica**: `function foo({ name, age, city }: FooParams)` é mais legível que `function foo(name, age, city)`.',
-                'complexity': '🧠 **Complexidade alta** — Muitos caminhos de execução.\n\n💡 **Dica**: Reduza if/else aninhados. Use early returns, guard clauses, ou extraia condições para funções.',
-                'max-depth': '🧠 **Aninhamento excessivo** — Muitos níveis de if/for.\n\n💡 **Dica**: Use early returns para reduzir aninhamento:\n```tsx\nif (!condition) return\n// código principal sem aninhamento\n```',
-                'max-nested-callbacks': '🧠 **Callbacks aninhados** — Prefira async/await.\n\n💡 **Dica**: Callbacks dentro de callbacks são difíceis de ler. Use `async/await` para código mais limpo.',
-
-                // Console
-                'no-console': '🧹 **`console.log` detectado** — Remova antes de fazer merge.\n\n💡 **Dica**: Para feedback ao usuário use **Toast**. Para debug use breakpoints. Para monitoramento use Sentry.',
-
-                // Next.js
-                '@next/next/no-html-link-for-pages': '⚡ **Use `<Link>` do Next.js** — Substitua `<a href>` por `<Link>`.\n\n💡 **Dica**: `<Link>` faz prefetch automático e navegação client-side (mais rápido!).',
-                '@next/next/no-img-element': '⚡ **Use `<Image>` do Next.js** — Substitua `<img>` por `<Image>`.\n\n💡 **Dica**: `<Image>` otimiza automaticamente: lazy loading, resize, WebP, blur placeholder.',
-                '@next/next/no-sync-scripts': '⚡ **Script síncrono detectado** — Use `<Script>` do Next.js.\n\n💡 **Dica**: Scripts síncronos bloqueiam o render. Use `<Script strategy="afterInteractive">` ou `lazyOnload`.',
-                '@next/next/no-page-custom-font': '⚡ **Use `next/font`** — Fontes customizadas devem usar o sistema de fontes do Next.js.\n\n💡 **Dica**: `next/font` elimina layout shift e faz subset automático.',
-
-                // React
-                'react/jsx-key': '🔑 **Faltou prop `key`** — Elementos em listas precisam de `key` única.\n\n💡 **Dica**: Use IDs do banco como key. Evite usar index como key em listas que podem mudar.',
-                'react/jsx-no-duplicate-props': '🚫 **Props duplicadas** — Você declarou a mesma prop mais de uma vez.',
-                'react/jsx-no-undef': (() => {
-                  const comp = message.split("'")[1] || 'Este componente';
-                  return `🚫 **\`${comp}\` não definido** — Verifique se importou corretamente.\n\n💡 **Dica**: Verifique o nome do import e o caminho do arquivo.`;
-                })(),
-                'react/no-children-prop': '🚫 **Uso incorreto de children** — Use `<Comp>conteúdo</Comp>` em vez de `<Comp children="..." />`.',
-                'react/no-danger-with-children': '🚫 **Conflito perigoso** — Não use `dangerouslySetInnerHTML` com children.',
-                'react/no-deprecated': '⚠️ **API deprecated** — Este recurso do React está descontinuado. Consulte a documentação.',
-                'react/no-direct-mutation-state': '🚫 **Mutação direta de state** — Use `setState()` ou `useState` setter.',
-                'react/no-unescaped-entities': '⚠️ **Entidade não escapada** — Use `{\'texto\'}` ou `&quot;` para caracteres especiais em JSX.',
-                'react/self-closing-comp': '🧹 **Tag não auto-fechada** — Use `<Comp />` em vez de `<Comp></Comp>` quando não tem children.',
-
-                // React Hooks
-                'react-hooks/rules-of-hooks': '🚫 **Regra de Hooks violada** — Hooks só podem ser chamados no nível superior.\n\n💡 **Dica**: NUNCA use hooks dentro de if, for, ou funções aninhadas. Se precisa de lógica condicional, use dentro do hook.',
-                'react-hooks/exhaustive-deps': '⚠️ **Dependências faltando** — O array de dependências do hook está incompleto.\n\n💡 **Dica**: Adicione todas as variáveis usadas dentro do callback ao array de dependências. Ou use `useCallback`/`useMemo` para estabilizar referências.',
+                '@typescript-eslint/no-unused-vars': `🧹 **Não utilizado**: \`${varName || 'variável'}\` — remova ou prefixe com \`_\`.`,
+                '@typescript-eslint/no-unused-expressions': '🧹 **Expressão sem efeito** — falta atribuição ou chamada de função?',
+                '@typescript-eslint/no-explicit-any': '📐 **Evite `any`** — defina o tipo correto em `/interfaces` ou use `unknown`.',
+                '@typescript-eslint/no-var-requires': '📦 **Use `import`** em vez de `require()`.',
+                '@typescript-eslint/consistent-type-definitions': '📐 **Use `interface`** em vez de `type` para objetos.',
+                'no-inline-comments': '💬 **Comentário inline** — remova ou mova para linha acima.',
+                'line-comment-position': '💬 **Comentário na posição errada** — mova para linha acima.',
+                'no-warning-comments': '🏷️ **TODO/FIXME** — resolva antes de mergear.',
+                'spaced-comment': '💬 Adicione espaço após `//`.',
+                'max-lines': '📏 **Arquivo muito longo** — ultrapassa 200 linhas. Divida o arquivo.',
+                'max-lines-per-function': '📐 **Função muito longa** — extraia lógica para funções menores.',
+                'max-statements': '📐 **Muitas declarações** — extraia para hooks ou utilitários.',
+                'max-params': '📐 **Muitos parâmetros** — use um objeto de configuração.',
+                'complexity': '🧠 **Complexidade alta** — simplifique com early returns ou extraia funções.',
+                'max-depth': '🧠 **Aninhamento excessivo** — use early returns.',
+                'max-nested-callbacks': '🧠 **Callbacks aninhados** — use async/await.',
+                'no-console': '🧹 **console detectado** — remova. Use Toast para feedback ao usuário.',
+                '@next/next/no-html-link-for-pages': '⚡ Use `<Link>` do Next.js em vez de `<a>`.',
+                '@next/next/no-img-element': '⚡ Use `<Image>` do Next.js em vez de `<img>`.',
+                '@next/next/no-sync-scripts': '⚡ Use `<Script>` do Next.js.',
+                '@next/next/no-page-custom-font': '⚡ Use `next/font` para fontes.',
+                'react/jsx-key': '🔑 **Faltou `key`** — elementos em listas precisam de key única.',
+                'react/jsx-no-duplicate-props': '🚫 **Props duplicadas** neste componente.',
+                'react/jsx-no-undef': `🚫 **\`${varName || 'Componente'}\` não definido** — verifique o import.`,
+                'react/no-children-prop': '🚫 Use `<Comp>conteúdo</Comp>` em vez de prop children.',
+                'react/no-danger-with-children': '🚫 Não use dangerouslySetInnerHTML com children.',
+                'react/no-deprecated': '⚠️ **API deprecated** — consulte a documentação.',
+                'react/no-direct-mutation-state': '🚫 Use `setState()` ou useState setter.',
+                'react/no-unescaped-entities': '⚠️ Escape caracteres especiais em JSX.',
+                'react/self-closing-comp': '🧹 Use `<Comp />` quando não tem children.',
+                'react-hooks/rules-of-hooks': '🚫 **Hooks** só podem ser chamados no nível superior do componente.',
+                'react-hooks/exhaustive-deps': '⚠️ **Dependências faltando** no array do hook.',
               };
-
               return translations[ruleId] || `**${ruleId}**: ${message}`;
             };
 
@@ -214,32 +191,37 @@ jobs:
                   if (msg.severity === 2) hasLintErrors = true;
 
                   const translatedMessage = translateMessage(msg.ruleId, msg.message);
-                  const severity = msg.severity === 2 ? '🚫 **ERRO**' : '⚠️ **ATENÇÃO**';
 
                   reviewComments.push({
                     path: relativePath,
                     line: msg.line,
-                    body: [severity, '', translatedMessage, '', '---', `<sub>Regra: \`${msg.ruleId}\` | 🤖 DLF Review Agent</sub>`].join('\n'),
+                    body: `${translatedMessage}\n\n<sub>🤖 DLF Review Agent</sub>`,
                   });
                 }
               }
             }
 
-            // Arquitetura
+            // Arquitetura — separar fileLevel (resumo) de inline (linhas)
+            const fileLevelIssues = [];
             if (fs.existsSync('architecture-report.json')) {
               const archIssues = JSON.parse(fs.readFileSync('architecture-report.json', 'utf8'));
 
               for (const issue of archIssues) {
                 const filePath = normPath(issue.file);
                 if (!modifiedFiles.has(filePath)) continue;
-                if (!isLineInDiff(filePath, issue.line)) continue;
 
-                const severityIcon = issue.severity === 'error' ? '🚫 **ERRO**' : '💡 **SUGESTÃO**';
+                // Issues file-level vão pro body da review, não inline
+                if (issue.fileLevel) {
+                  fileLevelIssues.push({ file: filePath, ...issue });
+                  continue;
+                }
+
+                if (!isLineInDiff(filePath, issue.line)) continue;
 
                 reviewComments.push({
                   path: filePath,
                   line: issue.line,
-                  body: [severityIcon, '', issue.message, '', '---', `<sub>Categoria: \`${issue.category || 'architecture'}\` | 🤖 DLF Review Agent</sub>`].join('\n'),
+                  body: `💡 ${issue.message}\n\n<sub>🤖 DLF Review Agent</sub>`,
                 });
               }
             }
@@ -249,32 +231,43 @@ jobs:
             for (const c of reviewComments) {
               const key = `${c.path}::${c.line}`;
               if (grouped.has(key)) {
-                const existing = grouped.get(key);
-                existing.body += '\n\n---\n\n' + c.body;
+                grouped.get(key).body += '\n\n---\n\n' + c.body;
               } else {
                 grouped.set(key, { ...c });
               }
             }
             const dedupedComments = [...grouped.values()];
 
-            // COMMENT quando tem avisos/sugestões, REQUEST_CHANGES quando tem erros de lint
-            // Nunca usa APPROVE (GitHub Actions não tem permissão para aprovar PRs)
+            // ── Montar body da review com issues file-level ──
             const event = hasLintErrors ? 'REQUEST_CHANGES' : 'COMMENT';
-            const reviewBody = dedupedComments.length > 0
-              ? `🤖 **DLF Code Review Agent** analisou este PR e deixou **${dedupedComments.length}** comentário(s) nas linhas dos arquivos.\n\nRevise em **Files changed** e aprove quando estiver ok.`
-              : '🤖 **DLF Code Review Agent**: Nenhum problema encontrado nos arquivos alterados. ✅';
+            let reviewBodyParts = [];
+
+            if (dedupedComments.length > 0 || fileLevelIssues.length > 0) {
+              reviewBodyParts.push(`🤖 **DLF Code Review Agent** — ${dedupedComments.length} comentário(s) nas linhas dos arquivos.`);
+
+              if (fileLevelIssues.length > 0) {
+                reviewBodyParts.push('');
+                reviewBodyParts.push('**Observações gerais:**');
+                for (const issue of fileLevelIssues) {
+                  reviewBodyParts.push(`- ${issue.message}`);
+                }
+              }
+
+              reviewBodyParts.push('');
+              reviewBodyParts.push('Revise em **Files changed** e aprove quando estiver ok.');
+            } else {
+              reviewBodyParts.push('🤖 **DLF Code Review Agent**: Nenhum problema encontrado. ✅');
+            }
+
+            const reviewBody = reviewBodyParts.join('\n');
 
             try {
               await github.rest.pulls.createReview({
-                owner,
-                repo,
-                pull_number: pr_number,
-                commit_id,
-                event,
+                owner, repo, pull_number: pr_number, commit_id, event,
                 body: reviewBody,
                 comments: dedupedComments,
               });
-              console.log('✅ Review submetida: ' + dedupedComments.length + ' comentário(s) em Files changed (event: ' + event + ')');
+              console.log('✅ Review: ' + dedupedComments.length + ' inline + ' + fileLevelIssues.length + ' file-level (event: ' + event + ')');
             } catch (error) {
               console.error('Erro ao submeter review:', error.message);
               if (error.response) console.error('Detalhes:', JSON.stringify(error.response.data, null, 2));
