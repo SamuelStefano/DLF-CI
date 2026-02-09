@@ -29,14 +29,14 @@ module.exports = [
       }
     },
     rules: {
-      // Componentização: arquivo com mais de 150 linhas
+      // ─── Padrão DLF: arquivo máximo de 200 linhas ───
       "max-lines": ["warn", {
-        max: 150,
+        max: 200,
         skipBlankLines: false,
         skipComments: false
       }],
       
-      // Componentização: componente muito longo (100 linhas de função)
+      // ─── Componentização: função/componente máximo de 100 linhas ───
       "max-lines-per-function": ["warn", {
         max: 100,
         skipBlankLines: true,
@@ -44,10 +44,14 @@ module.exports = [
         IIFEs: true
       }],
       
-      // Componentização: muitas variáveis de estado (considere dividir)
+      // ─── Complexidade de código ───
       "max-statements": ["warn", 15],
-      
-      // Aviso: comentários no código
+      "complexity": ["warn", 10],
+      "max-depth": ["warn", 3],
+      "max-nested-callbacks": ["warn", 3],
+      "max-params": ["warn", 3],
+
+      // ─── Comentários: sinalizar sempre ───
       "no-inline-comments": ["warn"],
       "line-comment-position": ["warn", { "position": "above" }],
       "no-warning-comments": ["warn", {
@@ -59,21 +63,21 @@ module.exports = [
         "block": { "markers": ["!"], "exceptions": ["*"], "balanced": true }
       }],
 
-      // Aviso: console.log
+      // ─── Console: sempre sinalizar (usar Toast) ───
       "no-console": ["warn"],
 
-      // Complexidade de código
-      "complexity": ["warn", 10],
-      "max-depth": ["warn", 3],
-      "max-nested-callbacks": ["warn", 3],
-
-      // Imports não utilizados
+      // ─── Imports e variáveis não utilizadas ───
       "@typescript-eslint/no-unused-vars": ["error", {
         "argsIgnorePattern": "^_",
-        "varsIgnorePattern": "^_"
+        "varsIgnorePattern": "^_",
+        "ignoreRestSiblings": true
       }],
 
-      // Regras React
+      // ─── TypeScript ───
+      "@typescript-eslint/no-explicit-any": "warn",
+      "@typescript-eslint/consistent-type-definitions": ["warn", "interface"],
+
+      // ─── React ───
       "react/jsx-uses-react": "off",
       "react/react-in-jsx-scope": "off",
       "react/prop-types": "off",
@@ -87,26 +91,17 @@ module.exports = [
       "react/no-unescaped-entities": "warn",
       "react/self-closing-comp": "warn",
 
-      // Regras React Hooks
+      // ─── React Hooks ───
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "warn",
 
-      // Next.js
+      // ─── Next.js ───
       "@next/next/no-html-link-for-pages": "error",
       "@next/next/no-img-element": "warn",
       "@next/next/no-sync-scripts": "error",
       "@next/next/no-page-custom-font": "warn",
 
-      // Organização: preferir named exports
-      "import/no-default-export": "off",
-      
-      // Tipos: evitar declaração inline de tipos complexos
-      "@typescript-eslint/consistent-type-definitions": ["warn", "interface"],
-      
-      // Funções: parâmetros demais = precisa de objeto de config
-      "max-params": ["warn", 3],
-
-      // Regras TypeScript recomendadas
+      // ─── Regras TypeScript recomendadas ───
       ...tsPlugin.configs.recommended.rules
     }
   }

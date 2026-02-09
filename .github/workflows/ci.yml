@@ -34,11 +34,21 @@ jobs:
           node -e "
           const fs = require('fs');
           const path = require('path');
-          const { checkArchitecture } = require('./.github/workflows/architecture-check.js');
-          
+
+          // Carregar o checker (local ou do DLF-CI)
+          let checkArchitecture;
+          const localPath = './.github/workflows/architecture-check.js';
+          if (fs.existsSync(localPath)) {
+            checkArchitecture = require(localPath).checkArchitecture;
+          } else {
+            console.log('⚠️ architecture-check.js não encontrado, pulando análise de arquitetura');
+            fs.writeFileSync('architecture-report.json', '[]');
+            process.exit(0);
+          }
+
           const files = fs.readdirSync('.', { recursive: true })
-            .filter(f => /\.(ts|tsx)$/.test(f) && !f.includes('node_modules'));
-          
+            .filter(f => /\.(ts|tsx)$/.test(f) && !f.includes('node_modules') && !f.includes('.d.ts'));
+
           const issues = [];
           files.forEach(file => {
             const content = fs.readFileSync(file, 'utf8');
@@ -47,16 +57,20 @@ jobs:
               issues.push({ file, ...issue });
             });
           });
-          
-          fs.writeFileSync('architecture-report.json', JSON.stringify(issues));
+
+          fs.writeFileSync('architecture-report.json', JSON.stringify(issues, null, 2));
+          console.log('📊 Análise de arquitetura: ' + issues.length + ' issues encontradas');
           " || true
 
       - name: Typecheck
         id: typecheck
-        run: npm run typecheck
+        run: npm run typecheck 2>&1 | tee typecheck-output.txt
         continue-on-error: true
 
-      - name: Comentar erros inline
+      # ───────────────────────────────────────
+      # Comentários inline nas linhas do PR
+      # ───────────────────────────────────────
+      - name: 🤖 DLF Agent — Comentários inline
         if: always()
         uses: actions/github-script@v7
         with:
@@ -64,204 +78,474 @@ jobs:
           script: |
             const fs = require('fs');
             const path = require('path');
-            
-            if (!fs.existsSync('eslint-report.json')) {
-              console.log('Nenhum relatório de lint encontrado');
-              return;
-            }
-
-            const report = JSON.parse(fs.readFileSync('eslint-report.json', 'utf8'));
-            const files = report.filter(f => f.messages.length > 0);
-            
-            if (files.length === 0) {
-              console.log('Nenhum erro de lint encontrado');
-              return;
-            }
-
-            const translateMessage = (ruleId, message) => {
-              const translations = {
-                // TypeScript
-                '@typescript-eslint/no-unused-vars': `**Variável não utilizada**: ${message.split("'")[1] || 'esta variável'} foi declarada mas nunca é usada. Remova-a ou adicione um underscore no início se for intencional.`,
-                '@typescript-eslint/no-unused-expressions': '**Expressão sem efeito**: Esta linha não faz nada útil. Você esqueceu de atribuir a uma variável ou chamar uma função?',
-                '@typescript-eslint/no-explicit-any': '**Tipo `any` detectado**: Evite usar `any`. Defina o tipo correto ou use `unknown` se necessário.',
-                '@typescript-eslint/no-var-requires': '**Use import ES6**: Substitua `require()` por `import` para consistência.',
-                
-                // Comentários
-                'no-inline-comments': '**Comentário inline**: Evite comentários na mesma linha do código. Coloque o comentário na linha de cima para melhor legibilidade.',
-                'line-comment-position': '**Posição do comentário**: Comentários devem ficar acima do código, não ao lado.',
-                'no-warning-comments': '**Comentário de alerta**: Remova TODOs, FIXMEs e comentários temporários antes de commitar.',
-                'spaced-comment': '**Formatação de comentário**: Adicione um espaço após `//` ou `/*`.',
-                
-                // Qualidade de código e componentização
-                'max-lines': `**Arquivo muito longo**: Este arquivo tem mais de 150 linhas. Considere dividir em componentes ou módulos menores.`,
-                'max-lines-per-function': '**Componente/função muito longo**: Esta função tem mais de 100 linhas. Divida em funções/componentes menores ou extraia lógica para hooks customizados.',
-                'max-statements': '**Muitas declarações**: Esta função tem muitas variáveis/statements. Considere extrair lógica para hooks customizados ou dividir o componente.',
-                'max-params': '**Muitos parâmetros**: Esta função recebe muitos parâmetros. Use um objeto de configuração ou divida a função.',
-                'complexity': '**Complexidade alta**: Esta função é muito complexa. Divida em funções menores e mais simples.',
-                'max-depth': '**Aninhamento excessivo**: Muitos níveis de `if`/`for` aninhados. Simplifique a lógica ou extraia funções.',
-                'max-nested-callbacks': '**Callbacks aninhados**: Muitos callbacks dentro de callbacks. Use async/await ou extraia funções.',
-                'no-console': '**Console detectado**: Remova `console.log` antes de commitar. Use um logger adequado.',
-                
-                // Next.js
-                '@next/next/no-html-link-for-pages': '**Use next/link**: Substitua `<a href>` por `<Link>` do Next.js para navegação entre páginas.',
-                '@next/next/no-img-element': '**Use next/image**: Substitua `<img>` por `<Image>` do Next.js para otimização automática.',
-                '@next/next/no-sync-scripts': '**Script síncrono**: Use `<Script>` do Next.js com strategy adequada (beforeInteractive, afterInteractive, lazyOnload).',
-                '@next/next/no-page-custom-font': '**Fonte customizada**: Use `next/font` para otimização automática de fontes.',
-                
-                // Organização
-                '@typescript-eslint/consistent-type-definitions': '**Use interface**: Prefira `interface` em vez de `type` para definições de objetos (melhor para extends e merge).',
-                
-                // React
-                'react/jsx-key': '**Faltou `key` prop**: Elementos em arrays/iterações precisam de uma prop `key` única. Exemplo: `<div key={item.id}>`',
-                'react/jsx-no-duplicate-props': '**Props duplicadas**: Você declarou a mesma prop mais de uma vez neste componente.',
-                'react/jsx-no-undef': `**Componente não definido**: ${message.split("'")[1] || 'Este componente'} não foi importado ou não existe.`,
-                'react/no-children-prop': '**Uso incorreto de children**: Use `<Componente>conteúdo</Componente>` em vez de `<Componente children="conteúdo" />`.',
-                'react/no-danger-with-children': '**Conflito perigoso**: Não use `dangerouslySetInnerHTML` junto com children.',
-                'react/no-deprecated': '**API descontinuada**: Este recurso do React está deprecated. Verifique a documentação para alternativas.',
-                'react/no-direct-mutation-state': '**Mutação direta de state**: Nunca altere `this.state` diretamente. Use `setState()`.',
-                'react/no-unescaped-entities': '**Entidade não escapada**: Use `&quot;`, `&apos;`, `&gt;`, `&lt;` ou coloque o texto dentro de `{}`.',
-                'react/self-closing-comp': '**Tag não auto-fechada**: Componentes sem children devem usar `<Componente />` em vez de `<Componente></Componente>`.',
-                
-                // React Hooks
-                'react-hooks/rules-of-hooks': '**Regra de Hooks violada**: Hooks só podem ser chamados no nível superior de componentes funcionais. Não use dentro de condições, loops ou funções aninhadas.',
-                'react-hooks/exhaustive-deps': '**Dependências faltando**: O array de dependências do Hook está incompleto. Adicione todas as variáveis usadas dentro do Hook ou remova o Hook se não for necessário.',
-              };
-              
-              return translations[ruleId] || `**${ruleId}**: ${message}`;
-            };
 
             const { owner, repo } = context.repo;
             const pr_number = context.payload.pull_request?.number;
-            
+
             if (!pr_number) {
               console.log('Não é um pull request, pulando comentários');
               return;
             }
 
-            // Buscar arquivos modificados no PR
+            // ── Buscar arquivos modificados no PR ──
             const { data: prFiles } = await github.rest.pulls.listFiles({
-              owner,
-              repo,
-              pull_number: pr_number,
+              owner, repo, pull_number: pr_number,
             });
-
             const modifiedFiles = new Set(prFiles.map(f => f.filename));
 
-            for (const file of files) {
-              const relativePath = path.relative(process.cwd(), file.filePath);
-              
-              // Só comenta em arquivos que foram modificados
-              if (!modifiedFiles.has(relativePath)) continue;
+            // ── Mapa de linhas no diff (para evitar comentar fora do diff) ──
+            const diffLines = new Map();
+            for (const file of prFiles) {
+              const lines = new Set();
+              if (file.patch) {
+                const patchLines = file.patch.split('\n');
+                let currentLine = 0;
+                for (const patchLine of patchLines) {
+                  const hunkMatch = patchLine.match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
+                  if (hunkMatch) {
+                    currentLine = parseInt(hunkMatch[1], 10);
+                    continue;
+                  }
+                  if (patchLine.startsWith('+')) {
+                    lines.add(currentLine);
+                    currentLine++;
+                  } else if (patchLine.startsWith('-')) {
+                    // Linha removida, não incrementa
+                  } else {
+                    lines.add(currentLine);
+                    currentLine++;
+                  }
+                }
+              }
+              diffLines.set(file.filename, lines);
+            }
 
-              for (const msg of file.messages) {
-                const translatedMessage = translateMessage(msg.ruleId, msg.message);
-                const severity = msg.severity === 2 ? '🚫 ERRO' : '⚠️ ATENÇÃO';
-                
-                const body = `${severity}\n\n${translatedMessage}\n\n---\n<sub>Regra: \`${msg.ruleId}\`</sub>`;
+            function isLineInDiff(filePath, line) {
+              const fileLines = diffLines.get(filePath);
+              if (!fileLines || fileLines.size === 0) return true; // Se não temos info do diff, tenta comentar
+              return fileLines.has(line);
+            }
 
-                try {
-                  await github.rest.pulls.createReviewComment({
-                    owner,
-                    repo,
-                    pull_number: pr_number,
-                    body,
-                    commit_id: context.payload.pull_request.head.sha,
-                    path: relativePath,
-                    line: msg.line,
-                  });
-                } catch (error) {
-                  console.log(`Erro ao comentar em ${relativePath}:${msg.line}: ${error.message}`);
+            // ── Traduções do ESLint ──
+            const translateMessage = (ruleId, message) => {
+              const translations = {
+                // TypeScript
+                '@typescript-eslint/no-unused-vars': (() => {
+                  const varName = message.split("'")[1] || 'esta variável';
+                  // Detectar se é import
+                  if (message.includes('defined but never used')) {
+                    return `🧹 **Import/variável não utilizada**: \`${varName}\` foi declarada mas nunca é usada.\n\n💡 **Dica**: Imports e variáveis sem uso aumentam o bundle e poluem o código. Remova ou adicione \`_\` no início se for intencional (ex: \`_${varName}\`).\nNo VS Code: \`Ctrl+Shift+P → Organize Imports\``;
+                  }
+                  return `🧹 **Variável não utilizada**: \`${varName}\` foi declarada mas nunca é usada.\n\n💡 **Dica**: Remova variáveis que não está usando. Se precisa manter por algum motivo, adicione \`_\` no início: \`_${varName}\`.`;
+                })(),
+                '@typescript-eslint/no-unused-expressions': '🧹 **Expressão sem efeito** — Esta linha não faz nada útil.\n\n💡 **Dica**: Você esqueceu de atribuir o resultado a uma variável? Ou de chamar uma função? Verifique se não falta um `=` ou `()`.', 
+                '@typescript-eslint/no-explicit-any': '📐 **Tipo `any` detectado** — Evite `any` ao máximo.\n\n💡 **Dica**: `any` desabilita a proteção do TypeScript. Alternativas:\n- Defina o tipo correto na pasta `/interfaces`\n- Use `unknown` se realmente não sabe o tipo\n- Use generics `<T>` para flexibilidade com segurança',
+                '@typescript-eslint/no-var-requires': '📦 **Use `import` ES6** — Substitua `require()` por `import`.\n\n💡 **Dica**: `import` é o padrão moderno e permite tree-shaking (bundle menor).',
+                '@typescript-eslint/consistent-type-definitions': '📐 **Use `interface`** — Prefira `interface` em vez de `type` para objetos.\n\n💡 **Dica**: `interface` pode ser estendida e merged, é mais flexível para definições de objetos.',
+
+                // Comentários
+                'no-inline-comments': '💬 **Comentário inline** — Evite comentários na mesma linha do código.\n\n💡 **Dica**: Código limpo é autodocumentável. Se precisa explicar algo, o código provavelmente pode ser simplificado.',
+                'line-comment-position': '💬 **Posição do comentário** — Comentários devem ficar acima do código, não ao lado.\n\n💡 **Dica**: Mas antes, pergunte-se se o comentário é mesmo necessário!',
+                'no-warning-comments': '🏷️ **Comentário temporário** — Resolva TODOs e FIXMEs antes de fazer merge.\n\n💡 **Dica**: Se não pode resolver agora, crie uma Issue no GitHub e referencie no código.',
+                'spaced-comment': '💬 **Formatação de comentário** — Adicione um espaço após `//` ou `/*`.',
+
+                // Qualidade de código
+                'max-lines': `📏 **Arquivo muito longo** — Este arquivo ultrapassou o limite de **200 linhas** do padrão DLF.\n\n💡 **Dica**: Divida em:\n- Componentes menores (atoms/molecules/organisms)\n- Custom hooks em \`/hooks\`\n- Constantes em \`/consts\`\n- Types em \`/interfaces\``,
+                'max-lines-per-function': '📐 **Função muito longa** — Esta função tem muitas linhas.\n\n💡 **Dica**: Funções devem fazer UMA coisa. Extraia lógica para funções auxiliares, custom hooks ou utilitários.',
+                'max-statements': '📐 **Muitas declarações** — Função com complexidade alta.\n\n💡 **Dica**: Muitas variáveis em uma função indicam responsabilidade demais. Extraia para hooks ou funções utilitárias.',
+                'max-params': '📐 **Muitos parâmetros** — Use um objeto de configuração.\n\n💡 **Dica**: `function foo({ name, age, city }: FooParams)` é mais legível que `function foo(name, age, city)`.',
+                'complexity': '🧠 **Complexidade alta** — Muitos caminhos de execução.\n\n💡 **Dica**: Reduza if/else aninhados. Use early returns, guard clauses, ou extraia condições para funções.',
+                'max-depth': '🧠 **Aninhamento excessivo** — Muitos níveis de if/for.\n\n💡 **Dica**: Use early returns para reduzir aninhamento:\n```tsx\nif (!condition) return\n// código principal sem aninhamento\n```',
+                'max-nested-callbacks': '🧠 **Callbacks aninhados** — Prefira async/await.\n\n💡 **Dica**: Callbacks dentro de callbacks são difíceis de ler. Use `async/await` para código mais limpo.',
+
+                // Console
+                'no-console': '🧹 **`console.log` detectado** — Remova antes de fazer merge.\n\n💡 **Dica**: Para feedback ao usuário use **Toast**. Para debug use breakpoints. Para monitoramento use Sentry.',
+
+                // Next.js
+                '@next/next/no-html-link-for-pages': '⚡ **Use `<Link>` do Next.js** — Substitua `<a href>` por `<Link>`.\n\n💡 **Dica**: `<Link>` faz prefetch automático e navegação client-side (mais rápido!).',
+                '@next/next/no-img-element': '⚡ **Use `<Image>` do Next.js** — Substitua `<img>` por `<Image>`.\n\n💡 **Dica**: `<Image>` otimiza automaticamente: lazy loading, resize, WebP, blur placeholder.',
+                '@next/next/no-sync-scripts': '⚡ **Script síncrono detectado** — Use `<Script>` do Next.js.\n\n💡 **Dica**: Scripts síncronos bloqueiam o render. Use `<Script strategy="afterInteractive">` ou `lazyOnload`.',
+                '@next/next/no-page-custom-font': '⚡ **Use `next/font`** — Fontes customizadas devem usar o sistema de fontes do Next.js.\n\n💡 **Dica**: `next/font` elimina layout shift e faz subset automático.',
+
+                // React
+                'react/jsx-key': '🔑 **Faltou prop `key`** — Elementos em listas precisam de `key` única.\n\n💡 **Dica**: Use IDs do banco como key. Evite usar index como key em listas que podem mudar.',
+                'react/jsx-no-duplicate-props': '🚫 **Props duplicadas** — Você declarou a mesma prop mais de uma vez.',
+                'react/jsx-no-undef': (() => {
+                  const comp = message.split("'")[1] || 'Este componente';
+                  return `🚫 **\`${comp}\` não definido** — Verifique se importou corretamente.\n\n💡 **Dica**: Verifique o nome do import e o caminho do arquivo.`;
+                })(),
+                'react/no-children-prop': '🚫 **Uso incorreto de children** — Use `<Comp>conteúdo</Comp>` em vez de `<Comp children="..." />`.',
+                'react/no-danger-with-children': '🚫 **Conflito perigoso** — Não use `dangerouslySetInnerHTML` com children.',
+                'react/no-deprecated': '⚠️ **API deprecated** — Este recurso do React está descontinuado. Consulte a documentação.',
+                'react/no-direct-mutation-state': '🚫 **Mutação direta de state** — Use `setState()` ou `useState` setter.',
+                'react/no-unescaped-entities': '⚠️ **Entidade não escapada** — Use `{\'texto\'}` ou `&quot;` para caracteres especiais em JSX.',
+                'react/self-closing-comp': '🧹 **Tag não auto-fechada** — Use `<Comp />` em vez de `<Comp></Comp>` quando não tem children.',
+
+                // React Hooks
+                'react-hooks/rules-of-hooks': '🚫 **Regra de Hooks violada** — Hooks só podem ser chamados no nível superior.\n\n💡 **Dica**: NUNCA use hooks dentro de if, for, ou funções aninhadas. Se precisa de lógica condicional, use dentro do hook.',
+                'react-hooks/exhaustive-deps': '⚠️ **Dependências faltando** — O array de dependências do hook está incompleto.\n\n💡 **Dica**: Adicione todas as variáveis usadas dentro do callback ao array de dependências. Ou use `useCallback`/`useMemo` para estabilizar referências.',
+              };
+
+              return translations[ruleId] || `**${ruleId}**: ${message}`;
+            };
+
+            // ── Processar relatório do ESLint ──
+            let lintCommentCount = 0;
+            if (fs.existsSync('eslint-report.json')) {
+              const report = JSON.parse(fs.readFileSync('eslint-report.json', 'utf8'));
+              const filesWithErrors = report.filter(f => f.messages.length > 0);
+
+              for (const file of filesWithErrors) {
+                const relativePath = path.relative(process.cwd(), file.filePath);
+                if (!modifiedFiles.has(relativePath)) continue;
+
+                for (const msg of file.messages) {
+                  if (!isLineInDiff(relativePath, msg.line)) continue;
+
+                  const translatedMessage = translateMessage(msg.ruleId, msg.message);
+                  const severity = msg.severity === 2 ? '🚫 **ERRO**' : '⚠️ **ATENÇÃO**';
+
+                  const body = [
+                    severity,
+                    '',
+                    translatedMessage,
+                    '',
+                    '---',
+                    `<sub>Regra: \`${msg.ruleId}\` | 🤖 DLF Review Agent</sub>`,
+                  ].join('\n');
+
+                  try {
+                    await github.rest.pulls.createReviewComment({
+                      owner, repo,
+                      pull_number: pr_number,
+                      body,
+                      commit_id: context.payload.pull_request.head.sha,
+                      path: relativePath,
+                      line: msg.line,
+                    });
+                    lintCommentCount++;
+                  } catch (error) {
+                    console.log(`⚠️ Não foi possível comentar em ${relativePath}:${msg.line} — ${error.message}`);
+                  }
                 }
               }
             }
 
-            // Processar issues de arquitetura
+            // ── Processar relatório de arquitetura ──
+            let archCommentCount = 0;
             if (fs.existsSync('architecture-report.json')) {
               const archIssues = JSON.parse(fs.readFileSync('architecture-report.json', 'utf8'));
-              
+
               for (const issue of archIssues) {
                 if (!modifiedFiles.has(issue.file)) continue;
-                
-                const severity = issue.severity === 'error' ? '🚫 ERRO' : '💡 SUGESTÃO';
-                const body = `${severity}\n\n${issue.message}\n\n---\n<sub>Análise de Arquitetura</sub>`;
-                
+                if (!isLineInDiff(issue.file, issue.line)) continue;
+
+                const severityIcon = issue.severity === 'error' ? '🚫 **ERRO**' : '💡 **SUGESTÃO**';
+
+                const body = [
+                  severityIcon,
+                  '',
+                  issue.message,
+                  '',
+                  '---',
+                  `<sub>Categoria: \`${issue.category || 'architecture'}\` | 🤖 DLF Review Agent</sub>`,
+                ].join('\n');
+
                 try {
                   await github.rest.pulls.createReviewComment({
-                    owner,
-                    repo,
+                    owner, repo,
                     pull_number: pr_number,
                     body,
                     commit_id: context.payload.pull_request.head.sha,
                     path: issue.file,
                     line: issue.line,
                   });
+                  archCommentCount++;
                 } catch (error) {
-                  console.log(`Erro ao comentar arquitetura em ${issue.file}:${issue.line}: ${error.message}`);
+                  console.log(`⚠️ Não foi possível comentar arquitetura em ${issue.file}:${issue.line} — ${error.message}`);
                 }
               }
             }
 
+            console.log(`✅ Comentários inline: ${lintCommentCount} lint + ${archCommentCount} arquitetura`);
+
+      # ───────────────────────────────────────
+      # Resumo do agente (comentário principal)
+      # ───────────────────────────────────────
+      - name: 🤖 DLF Agent — Resumo da Review
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const { owner, repo } = context.repo;
+            const pr_number = context.payload.pull_request?.number;
+
+            if (!pr_number) return;
+
+            // ── Coletar dados ──
+            let lintErrors = 0, lintWarnings = 0;
+            let lintErrorFiles = [], lintWarningFiles = [];
+
+            if (fs.existsSync('eslint-report.json')) {
+              const report = JSON.parse(fs.readFileSync('eslint-report.json', 'utf8'));
+              for (const file of report) {
+                const relativePath = file.filePath.replace(process.cwd() + '/', '');
+                if (file.errorCount > 0) {
+                  lintErrors += file.errorCount;
+                  lintErrorFiles.push(relativePath);
+                }
+                if (file.warningCount > 0) {
+                  lintWarnings += file.warningCount;
+                  lintWarningFiles.push(relativePath);
+                }
+              }
+            }
+
+            let archIssues = [];
+            if (fs.existsSync('architecture-report.json')) {
+              archIssues = JSON.parse(fs.readFileSync('architecture-report.json', 'utf8'));
+            }
+
+            const typecheckFailed = '${{ steps.typecheck.outcome }}' === 'failure';
+            let typecheckOutput = '';
+            if (fs.existsSync('typecheck-output.txt')) {
+              typecheckOutput = fs.readFileSync('typecheck-output.txt', 'utf8');
+            }
+
+            // ── Categorizar issues de arquitetura ──
+            const archCategories = {};
+            for (const issue of archIssues) {
+              const cat = issue.category || 'other';
+              if (!archCategories[cat]) archCategories[cat] = [];
+              archCategories[cat].push(issue);
+            }
+
+            const totalIssues = lintErrors + lintWarnings + archIssues.length + (typecheckFailed ? 1 : 0);
+
+            // ── Se zero issues, elogie ──
+            if (totalIssues === 0 && !typecheckFailed) {
+              const body = [
+                '## 🤖 DLF Code Review Agent',
+                '',
+                '### ✅ PR impecável! Parabéns! 🎉',
+                '',
+                'Nenhum problema encontrado. Seu código está:',
+                '- ✅ Sem erros de lint',
+                '- ✅ Sem problemas de TypeScript',
+                '- ✅ Seguindo os padrões de arquitetura DLF',
+                '',
+                'Continue assim! Código limpo e bem organizado facilita a vida de todo o time. 💪',
+                '',
+                '---',
+                '<sub>🤖 DLF Code Review Agent v2.0</sub>',
+              ].join('\n');
+
+              const marker = '## 🤖 DLF Code Review Agent';
+              const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr_number });
+              const existing = comments.find(c => c.user?.login === 'github-actions[bot]' && c.body?.includes(marker));
+
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: pr_number, body });
+              }
+              return;
+            }
+
+            // ── Construir resumo ──
+            const sections = [];
+
+            sections.push('## 🤖 DLF Code Review Agent');
+            sections.push('');
+            sections.push('Olá! Analisei seu PR e aqui está o resumo da review:');
+            sections.push('');
+
+            // ── Tabela resumo ──
+            sections.push('### 📊 Visão Geral');
+            sections.push('');
+            sections.push('| Categoria | Quantidade | Status |');
+            sections.push('|-----------|:----------:|:------:|');
+
+            if (lintErrors > 0)
+              sections.push(`| 🚫 Erros de Lint | ${lintErrors} | ❌ Bloqueia merge |`);
+            if (lintWarnings > 0)
+              sections.push(`| ⚠️ Avisos de Lint | ${lintWarnings} | Corrigir recomendado |`);
+            if (typecheckFailed)
+              sections.push(`| 🔴 TypeScript | Erros | ❌ Bloqueia merge |`);
+            if (archIssues.length > 0)
+              sections.push(`| 💡 Sugestões de Arquitetura | ${archIssues.length} | Melhorias recomendadas |`);
+
+            sections.push('');
+
+            // ── Erros de TypeScript ──
+            if (typecheckFailed && typecheckOutput) {
+              sections.push('### 🔴 Erros de TypeScript');
+              sections.push('');
+              const tsErrors = typecheckOutput.split('\n')
+                .filter(l => /error TS\d+/.test(l))
+                .slice(0, 10);
+              if (tsErrors.length > 0) {
+                sections.push('```');
+                sections.push(tsErrors.join('\n'));
+                sections.push('```');
+              }
+              sections.push('');
+              sections.push('💡 **Dica**: Rode `npm run typecheck` localmente para ver todos os erros e corrigi-los antes do push.');
+              sections.push('');
+            }
+
+            // ── Seção de Arquitetura por categoria ──
+            if (archIssues.length > 0) {
+              sections.push('### 🏗️ Arquitetura & Organização');
+              sections.push('');
+
+              const categoryLabels = {
+                'file-size': '📏 Tamanho de Arquivo',
+                'comment': '💬 Comentários',
+                'commented-code': '🗑️ Código Comentado',
+                'todo-comment': '🏷️ TODOs/FIXMEs',
+                'inline-comment': '💬 Comentários Inline',
+                'unused-import': '🧹 Imports Não Utilizados',
+                'console-log': '🧹 Console.log',
+                'console-in-catch': '🧹 Console em Catch',
+                'large-constant': '📦 Constantes Extensas',
+                'scattered-constants': '📦 Constantes Dispersas',
+                'multiple-components': '🧩 Múltiplos Componentes',
+                'inline-type': '📐 Types Inline',
+                'long-function': '📐 Funções Longas',
+                'repetitive-pattern': '🔄 Padrões Repetitivos',
+                'too-many-params': '📐 Muitos Parâmetros',
+                'hook-placement': '🪝 Hooks',
+                'hook-extraction': '🪝 Extração de Hooks',
+                'supabase-in-component': '🗄️ Supabase no Componente',
+                'fetch-in-component': '🌐 Fetch no Componente',
+                'large-jsx': '🧩 JSX Extenso',
+                'too-many-states': '🧠 Muitos Estados',
+                'atomic-design': '🏗️ Atomic Design',
+                'duplicate-pattern': '🔄 Padrões Duplicados',
+              };
+
+              for (const [cat, issues] of Object.entries(archCategories)) {
+                const label = categoryLabels[cat] || cat;
+                const fileList = [...new Set(issues.map(i => i.file))];
+                sections.push(`- **${label}** (${issues.length}) — ${fileList.map(f => `\`${f}\``).join(', ')}`);
+              }
+              sections.push('');
+            }
+
+            // ── Dicas educacionais baseadas nos problemas encontrados ──
+            sections.push('### 💡 Dicas do DLF Agent');
+            sections.push('');
+
+            const tips = [];
+
+            if (archCategories['comment'] || archCategories['inline-comment'] || archCategories['commented-code']) {
+              tips.push('**Código limpo não precisa de comentários!** Use nomes descritivos para variáveis e funções. Se algo é complexo demais para entender sem comentário, simplifique a lógica.');
+            }
+            if (archCategories['console-log'] || archCategories['console-in-catch']) {
+              tips.push('**Substitua `console.log` por Toast!** O usuário não vê o console. Use `toast.success()` para feedback positivo e `toast.error()` para erros. Para monitoramento, use Sentry.');
+            }
+            if (archCategories['large-constant'] || archCategories['scattered-constants']) {
+              tips.push('**Constantes grandes merecem arquivo próprio.** Crie na pasta `/consts` quando uma constante passar de 10 linhas. Isso facilita imports seletivos e mantém os arquivos enxutos.');
+            }
+            if (archCategories['unused-import']) {
+              tips.push('**Organize seus imports!** No VS Code, use `Ctrl+Shift+P → Organize Imports` para remover imports não utilizados automaticamente.');
+            }
+            if (archCategories['too-many-states'] || archCategories['hook-extraction']) {
+              tips.push('**Componentes com 4+ useState precisam de um custom hook.** Extraia a lógica de estado para `hooks/use-nome.ts` — seu componente ficará mais limpo e testável.');
+            }
+            if (archCategories['multiple-components']) {
+              tips.push('**Um arquivo, um componente.** No Atomic Design, cada componente tem seu próprio arquivo. Isso facilita testes, reutilização e code review.');
+            }
+            if (archCategories['inline-type']) {
+              tips.push('**Types e interfaces devem ficar em `/interfaces` ou `/types`.** Isso permite reutilização e evita dependências circulares.');
+            }
+            if (archCategories['long-function'] || archCategories['repetitive-pattern']) {
+              tips.push('**Funções devem fazer UMA coisa.** Se passou de 30 linhas, provavelmente faz coisas demais. Extraia validações, transformações e chamadas de API para funções auxiliares.');
+            }
+            if (archCategories['file-size']) {
+              tips.push('**Nosso padrão é máximo 200 linhas por arquivo.** Arquivos menores são mais fáceis de entender, testar e revisar. Divida em componentes, hooks e utilitários.');
+            }
+            if (archCategories['fetch-in-component'] || archCategories['supabase-in-component']) {
+              tips.push('**Centralize chamadas de API.** Crie funções em `/lib` e consuma via custom hooks. Isso facilita cache, revalidação e tratamento de erros consistente.');
+            }
+
+            // Sempre adicionar uma dica geral
+            if (tips.length === 0) {
+              tips.push('Bom trabalho no geral! Revise os avisos acima para deixar o código ainda melhor.');
+            }
+
+            tips.forEach((tip, i) => {
+              sections.push(`${i + 1}. ${tip}`);
+            });
+            sections.push('');
+
+            // ── Próximos passos ──
+            sections.push('### ✅ Próximos Passos');
+            sections.push('');
+
+            if (lintErrors > 0 || typecheckFailed) {
+              sections.push('1. 🚫 **Corrija os erros** — eles bloqueiam o merge do PR');
+              sections.push('2. ⚠️ **Resolva os avisos** — melhoram significativamente a qualidade');
+              sections.push('3. 💡 **Considere as sugestões** — são opcionais mas muito recomendadas');
+              sections.push('');
+              sections.push('**Rode localmente antes de fazer push:**');
+              sections.push('```bash');
+              sections.push('npm run lint      # verificar erros de lint');
+              sections.push('npm run typecheck # verificar tipos TypeScript');
+              sections.push('```');
+            } else {
+              sections.push('1. ⚠️ **Resolva os avisos** — melhoram a qualidade do código');
+              sections.push('2. 💡 **Considere as sugestões** — são opcionais mas recomendadas');
+              sections.push('3. ✅ O CI está passando — bom trabalho!');
+            }
+
+            sections.push('');
+            sections.push('---');
+            sections.push('<sub>🤖 DLF Code Review Agent v2.0 — Analisando PRs para que você aprenda mais rápido</sub>');
+
+            const body = sections.join('\n');
+            const marker = '## 🤖 DLF Code Review Agent';
+
+            // Atualizar ou criar comentário
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr_number });
+            const existing = comments.find(c => c.user?.login === 'github-actions[bot]' && c.body?.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: pr_number, body });
+            }
+
+      # ───────────────────────────────────────
+      # Verificar se CI falhou
+      # ───────────────────────────────────────
       - name: Verificar se CI falhou
         if: always()
         run: |
+          FAILED=0
+
           if [ -f eslint-report.json ]; then
             ERRORS=$(node -e "const r = require('./eslint-report.json'); console.log(r.reduce((acc, f) => acc + f.errorCount, 0))")
             if [ "$ERRORS" -gt 0 ]; then
               echo "❌ Encontrados $ERRORS erros de lint"
-              exit 1
+              FAILED=1
             fi
           fi
+
           if [ "${{ steps.typecheck.outcome }}" == "failure" ]; then
-            echo "❌ Typecheck falhou"
+            echo "❌ TypeCheck falhou"
+            FAILED=1
+          fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "💡 Dica: Rode localmente antes de fazer push:"
+            echo "   npm run lint"
+            echo "   npm run typecheck"
             exit 1
           fi
 
-  comment:
-    needs: ci
-    if: failure()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Comment on PR when CI fails
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const marker = "❌ CI falhou (lint/typecheck).";
-
-            const body = [
-              marker,
-              `Logs completos: ${runUrl}`,
-              "Próximo passo: abrir os logs, corrigir o erro apontado e rodar `npm run lint` e `npm run typecheck` localmente antes do próximo push."
-            ].join("\n\n");
-
-            const { owner, repo } = context.repo;
-            const issue_number = context.payload.pull_request.number;
-
-            // Procura comentário existente do bot com o marcador
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner,
-              repo,
-              issue_number,
-            });
-
-            const existing = comments.find(
-              (c) =>
-                c.user?.login === "github-actions[bot]" &&
-                c.body?.includes(marker)
-            );
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner,
-                repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number,
-                body,
-              });
-            }
+          echo "✅ CI passou com sucesso!"

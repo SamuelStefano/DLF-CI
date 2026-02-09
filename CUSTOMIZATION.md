@@ -1,17 +1,53 @@
 # Guia de Customização
 
-## Ajustar severidade das regras
+## Configuração do Architecture Checker
 
-### Mudar warning para error
+### Ajustar limites
 
-No `eslint.config.js`, troque `"warn"` por `"error"`:
+No `.github/workflows/architecture-check.js`, edite o objeto `CONFIG`:
 
 ```js
-// Antes: só avisa
-"max-lines": ["warn", { max: 150 }],
+const CONFIG = {
+  MAX_FILE_LINES: 200,       // Máximo de linhas por arquivo
+  MAX_CONSTANT_LINES: 10,    // Constante acima disso → arquivo próprio
+  MAX_FUNCTION_LINES: 30,    // Função acima disso → dividir
+  MAX_JSX_LINES: 50,         // JSX acima disso → subcomponentes
+  MAX_USESTATE_COUNT: 4,     // useState acima disso → custom hook
+  MAX_PARAMS: 3,             // Parâmetros acima disso → objeto
+  MAX_INLINE_COMMENTS_TO_FLAG: 15, // Limite de comentários sinalizados por arquivo
+};
+```
+
+### Desabilitar checagens específicas
+
+Na função `checkArchitecture` do `architecture-check.js`, comente as linhas das checagens que não quer:
+
+```js
+function checkArchitecture(filePath, content) {
+  const lines = content.split('\n');
+  const issues = [];
+
+  issues.push(...checkFileSize(filePath, lines));
+  // issues.push(...checkComments(filePath, lines));        // Desabilitar comentários
+  issues.push(...checkUnusedImports(filePath, content, lines));
+  // issues.push(...checkConsoleLogs(filePath, content, lines)); // Permitir console.log
+  issues.push(...checkLargeConstants(filePath, content, lines));
+  // ... etc
+}
+```
+
+## Configuração do ESLint
+
+### Ajustar severidade das regras
+
+No `eslint.config.js`:
+
+```js
+// Antes: só avisa (CI passa)
+"max-lines": ["warn", { max: 200 }],
 
 // Depois: faz CI falhar
-"max-lines": ["error", { max: 150 }],
+"max-lines": ["error", { max: 200 }],
 ```
 
 ### Desabilitar regras
@@ -20,48 +56,52 @@ No `eslint.config.js`, troque `"warn"` por `"error"`:
 // Desabilitar completamente
 "no-console": "off",
 
-// Desabilitar apenas para warnings
-"no-console": ["error"],  // só falha em errors, ignora warnings
-```
-
-## Customizar limites
-
-### Aumentar limite de linhas
-
-```js
-"max-lines": ["warn", { 
-  max: 200,  // era 150
-  skipBlankLines: true,  // ignorar linhas vazias
-  skipComments: true     // ignorar comentários
+// Mudar para apenas warning
+"@typescript-eslint/no-unused-vars": ["warn", {
+  "argsIgnorePattern": "^_",
+  "varsIgnorePattern": "^_"
 }],
 ```
 
-### Ajustar complexidade
+### Ajustar limites
 
 ```js
+// Aumentar limite de linhas
+"max-lines": ["warn", { 
+  max: 300,              // era 200
+  skipBlankLines: true,  // ignorar linhas vazias
+  skipComments: true     // ignorar comentários
+}],
+
+// Ajustar complexidade
 "complexity": ["warn", 15],  // era 10
 "max-depth": ["warn", 4],    // era 3
 ```
 
 ## Adicionar novas traduções
 
-No `.github/workflows/ci.yml`, edite o objeto `translations`:
+No `.github/workflows/ci.yml`, edite o objeto `translations` dentro do script `Comentar erros inline`:
 
 ```js
 const translations = {
   // Adicione sua regra aqui
-  'sua-regra-id': '**Título**: Explicação em português do problema e como resolver.',
+  'sua-regra-id': '🔍 **Título**: Explicação em português.\n\n💡 **Dica**: Como resolver.',
   
   // Exemplo real
-  'no-var': '**Use let/const**: A palavra `var` está deprecated. Use `let` ou `const` para declarar variáveis.',
+  'no-var': '🧹 **Use let/const** — A palavra `var` tem escopo confuso.\n\n💡 **Dica**: Use `const` para valores que não mudam e `let` para variáveis.',
 };
+```
+
+**Padrão de mensagem:**
+```
+[emoji] **Título curto** — Descrição do problema.
+
+💡 **Dica**: Explicação educacional e como corrigir.
 ```
 
 ## Configurar apenas TypeScript (sem React)
 
-Se seu projeto não usa React, remova as dependências e regras:
-
-### 1. Remover do package.json
+### 1. Remover dependências React do `package.json`
 
 ```json
 {
@@ -70,14 +110,11 @@ Se seu projeto não usa React, remova as dependências e regras:
     "typescript": "^5.7.2",
     "@typescript-eslint/parser": "^8.20.0",
     "@typescript-eslint/eslint-plugin": "^8.20.0"
-    // Remover estas linhas:
-    // "eslint-plugin-react": "^7.37.2",
-    // "eslint-plugin-react-hooks": "^5.1.0"
   }
 }
 ```
 
-### 2. Simplificar eslint.config.js
+### 2. Simplificar `eslint.config.js`
 
 ```js
 const tsPlugin = require("@typescript-eslint/eslint-plugin");
@@ -85,7 +122,7 @@ const tsParser = require("@typescript-eslint/parser");
 
 module.exports = [
   {
-    files: ["**/*.{ts}"],  // remover tsx se não usar
+    files: ["**/*.ts"],
     languageOptions: {
       parser: tsParser,
       parserOptions: {
@@ -97,10 +134,9 @@ module.exports = [
       "@typescript-eslint": tsPlugin
     },
     rules: {
-      // Apenas regras de TypeScript e qualidade
-      "max-lines": ["warn", { max: 150 }],
-      "complexity": ["warn", 10],
+      "max-lines": ["warn", { max: 200 }],
       "no-console": ["warn"],
+      "complexity": ["warn", 10],
       ...tsPlugin.configs.recommended.rules
     }
   }
@@ -115,7 +151,7 @@ module.exports = [
 npm install -D prettier eslint-config-prettier
 ```
 
-### 2. Criar .prettierrc
+### 2. Criar `.prettierrc`
 
 ```json
 {
@@ -126,7 +162,7 @@ npm install -D prettier eslint-config-prettier
 }
 ```
 
-### 3. Adicionar ao eslint.config.js
+### 3. Adicionar ao `eslint.config.js`
 
 ```js
 const prettier = require("eslint-config-prettier");
@@ -134,20 +170,18 @@ const prettier = require("eslint-config-prettier");
 module.exports = [
   {
     // ... suas configs
-    rules: {
-      // ... suas regras
-    }
   },
   prettier  // desabilita regras que conflitam com Prettier
 ];
 ```
 
-### 4. Adicionar script no package.json
+### 4. Adicionar scripts
 
 ```json
 {
   "scripts": {
     "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit"
   }
 }
@@ -157,6 +191,7 @@ module.exports = [
 
 ### Apenas src/
 
+No `eslint.config.js`:
 ```js
 files: ["src/**/*.{ts,tsx}"],
 ```
@@ -186,29 +221,23 @@ No `.github/workflows/ci.yml`:
     cache: npm
 ```
 
-## Desabilitar comentários do bot
+## Desabilitar o resumo do Agent
 
-Se não quiser comentários inline, apenas falhar o CI:
+Se não quiser o comentário de resumo, remova o step `🤖 DLF Agent — Resumo da Review` do `ci.yml`.
 
-No `.github/workflows/ci.yml`, remova o step "Comentar erros inline" e deixe apenas:
+## Desabilitar comentários inline
 
-```yaml
-- name: Lint
-  run: npx eslint --config eslint.config.js .
-
-- name: Typecheck
-  run: npm run typecheck
-```
+Se quiser apenas o resumo (sem comentários inline), remova o step `🤖 DLF Agent — Comentários inline` do `ci.yml`.
 
 ## Adicionar testes ao workflow
 
-```yaml
-- name: Typecheck
-  run: npm run typecheck
+No `ci.yml`, adicione depois do typecheck:
 
-# Adicionar depois do typecheck
+```yaml
 - name: Run tests
+  id: tests
   run: npm test
+  continue-on-error: true
 ```
 
 ---

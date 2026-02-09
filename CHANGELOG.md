@@ -1,89 +1,106 @@
 # Changelog
 
-## [Unreleased]
+## [2.0.0] - 2026-02-09
+
+### ✨ DLF Code Review Agent v2.0
+
+Reescrita completa do sistema de review. Agora funciona como um **agente inteligente** que dá dicas educacionais.
 
 ### Adicionado
 
-**Análise de Arquitetura Inteligente:**
-- 🏗️ Detecta types/interfaces que deveriam estar em `@/types`
-- 🏗️ Identifica constantes dispersas que deveriam estar em `@/constants`
-- 🏗️ Sugere extrair lógica para hooks customizados em `@/hooks`
-- 🏗️ Detecta queries do Supabase em componentes (devem estar em `@/lib`)
-- 🏗️ Identifica funções que usam hooks e deveriam ser custom hooks
-- 🏗️ Alerta sobre componentes com muito JSX (50+ linhas)
-- 🏗️ Detecta `fetch` direto em componentes (deveria estar em `@/lib/api`)
+**🤖 Agent Mode:**
+- Resumo completo do PR em formato de relatório (tabela, categorias, próximos passos)
+- Mensagens educacionais com formato `💡 Dica:` em todos os comentários
+- Elogio quando o PR está impecável (zero issues)
+- Dicas contextuais baseadas nos problemas encontrados
+- Atualização automática do comentário de resumo (não duplica)
+
+**🧹 Código Limpo:**
+- Detecção de **todos os comentários** no código com flag como warning
+- Detecção de **código comentado** (código que foi comentado em vez de removido)
+- Detecção de **TODO/FIXME/HACK** com sugestão de criar Issue
+- Detecção de **imports não utilizados** com dica de Organize Imports
+- Detecção de **console.log** com sugestão de usar **Toast**
+- console.log em **catch blocks** → sugestão específica de Toast para erros
+
+**📦 Constantes:**
+- Detecção de constantes com **10+ linhas** → sugerir arquivo próprio em `/consts`
+- Detecção de **3+ constantes UPPER_CASE** dispersas → sugerir centralização
+
+**🧩 Componentização & Atomic Design:**
+- Detecção de **múltiplos componentes** no mesmo arquivo
+- Sugestão de organização em **atoms/molecules/organisms** baseada na complexidade
+- Detecção de **JSX extenso** (50+ linhas) → sugerir subcomponentes
+
+**📐 Funções & Abstração:**
+- Detecção de **funções com 30+ linhas** → sugerir divisão
+- Detecção de **handlers repetitivos** com padrão similar → sugerir abstração
+- Detecção de **muitos parâmetros** (3+) → sugerir objeto de configuração
+- Detecção de **try-catch repetitivos** (3+) → sugerir wrapper genérico
+
+**🪝 Hooks:**
+- Detecção de **custom hooks fora de /hooks**
+- Detecção de **funções que usam hooks** mas não são hooks
+- Detecção de **4+ hooks de efeito/memo** → sugerir extração para custom hook
+- Detecção de **4+ useState** → sugerir custom hook ou useReducer
+
+**🔧 CI Melhorado:**
+- Mapa de diff para comentar apenas em linhas que estão no diff
+- Fallback gracioso quando architecture-check.js não existe
+- Captura de output do typecheck para incluir no resumo
+- Melhor tratamento de erros com mensagens informativas
+
+### Alterado
+- `max-lines`: limite alterado de **150 → 200 linhas** (novo padrão DLF)
+- `MAX_USESTATE_COUNT`: de **5 → 4** (mais rigoroso)
+- Mensagens reescritas para serem **educacionais** (formato de dica/mentor)
+- Traduções do ESLint ampliadas e melhoradas
+- README completamente reescrito
+- CUSTOMIZATION.md atualizado com novas opções
+
+### Configuração
+
+Novo objeto `CONFIG` no `architecture-check.js` para ajuste fácil de limites:
+```js
+const CONFIG = {
+  MAX_FILE_LINES: 200,
+  MAX_CONSTANT_LINES: 10,
+  MAX_FUNCTION_LINES: 30,
+  MAX_JSX_LINES: 50,
+  MAX_USESTATE_COUNT: 4,
+  MAX_PARAMS: 3,
+  MAX_INLINE_COMMENTS_TO_FLAG: 15,
+};
+```
+
+---
+
+## [1.1.0] - 2026-02-06
+
+### Adicionado
+
+**Análise de Arquitetura:**
+- Detecta types/interfaces inline → sugere mover para `@/types`
+- Identifica constantes dispersas → sugere centralizar em `@/constants`
+- Sugere extrair lógica para hooks customizados
+- Detecta queries Supabase em componentes
+- Identifica funções que usam hooks → sugere custom hook
+- Alerta sobre JSX extenso (50+ linhas)
+- Detecta `fetch` direto em componentes
 
 **Next.js:**
-- ✅ Suporte completo para Next.js (@next/eslint-plugin-next)
-- ✅ Validação de uso de `<Link>` vs `<a>`
-- ✅ Validação de uso de `<Image>` vs `<img>`
-- ✅ Verificação de scripts síncronos
-- ✅ Sugestão de uso do `next/font`
+- Suporte completo para Next.js (`@next/eslint-plugin-next`)
+- Validação de `<Link>` vs `<a>`, `<Image>` vs `<img>`
 
 **Componentização:**
-- ✅ Detecta componentes muito longos (100+ linhas de função)
-- ✅ Alerta sobre muitos `useState` no mesmo componente (5+)
-- ✅ Identifica funções com muitos parâmetros (3+)
-- ✅ Detecta muitas declarações em uma função (15+)
+- Detecta componentes muito longos (100+ linhas)
+- Alerta sobre muitos `useState` (5+)
+- Funções com muitos parâmetros (3+)
 
 **Geral:**
-- ✅ Suporte completo para React e React Hooks
-- ✅ Comentários em português com mensagens específicas e contextuais
-- ✅ Detecção de complexidade de código (funções, aninhamento)
-- ✅ Verificação de imports não utilizados
-- ✅ Regras para prop `key` em listas React
-- ✅ Validação de regras de Hooks (rules-of-hooks, exhaustive-deps)
-- ✅ Sistema customizado de tradução de mensagens do ESLint
-- ✅ Badge de status para README
-
-### Melhorado
-- 🔧 Mensagens de erro agora são 100% em português
-- 🔧 Cache automático de node_modules (via actions/setup-node)
-- 🔧 Comentários inline explicam o problema e sugerem solução
-- 🔧 Workflow reutilizável via `workflow_call`
-
-### Regras incluídas
-
-**TypeScript:**
-- `@typescript-eslint/no-unused-vars` - variáveis não usadas
-- `@typescript-eslint/no-explicit-any` - uso de any
-- `@typescript-eslint/no-unused-expressions` - expressões sem efeito
-
-**Qualidade de código:**
-- `max-lines` - arquivos com +150 linhas
-- `complexity` - funções muito complexas
-- `max-depth` - aninhamento excessivo
-- `max-nested-callbacks` - callbacks aninhados
-- `no-console` - console.log no código
-
-**Comentários:**
-- `no-inline-comments` - comentários na mesma linha
-- `line-comment-position` - posição incorreta
-- `no-warning-comments` - TODOs/FIXMEs
-
-**React:**
-- `react/jsx-key` - faltou key em listas
-- `react/jsx-no-undef` - componente não importado
-- `react/no-direct-mutation-state` - mutação direta de state
-- `react/self-closing-comp` - componentes sem auto-closing
-
-**React Hooks:**
-- `react-hooks/rules-of-hooks` - hooks usados incorretamente
-- `react-hooks/exhaustive-deps` - dependências faltando
-
-**Next.js:**
-- `@next/next/no-html-link-for-pages` - uso de <a> em vez de <Link>
-- `@next/next/no-img-element` - uso de <img> em vez de <Image>
-- `@next/next/no-sync-scripts` - scripts síncronos
-- `@next/next/no-page-custom-font` - fontes customizadas
-
-**Componentização:**
-- `max-lines-per-function` - funções/componentes muito longos
-- `max-statements` - muitas declarações (states, vars)
-- `max-params` - muitos parâmetros (use objeto)
-
-**Organização:**
-- `@typescript-eslint/consistent-type-definitions` - preferir interface
+- Comentários 100% em português
+- Sistema de tradução de mensagens ESLint
+- Suporte para React e React Hooks
 
 ## [1.0.0] - 2026-02-06
 
