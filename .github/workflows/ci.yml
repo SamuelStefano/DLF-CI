@@ -107,18 +107,19 @@ jobs:
                 const patchLines = file.patch.split('\n');
                 let currentLine = 0;
                 for (const patchLine of patchLines) {
-                  const hunkMatch = patchLine.match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
-                  if (hunkMatch) {
-                    currentLine = parseInt(hunkMatch[1], 10);
+                  if (patchLine.startsWith('@@')) {
+                    const hunkMatch = patchLine.match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
+                    if (hunkMatch) currentLine = Math.max(1, parseInt(hunkMatch[1], 10));
                     continue;
                   }
+                  if (patchLine.startsWith('\\')) continue;
                   if (patchLine.startsWith('+')) {
-                    lines.add(currentLine);
+                    if (currentLine >= 1) lines.add(currentLine);
                     currentLine++;
                   } else if (patchLine.startsWith('-')) {
                     // nada
                   } else {
-                    lines.add(currentLine);
+                    if (currentLine >= 1) lines.add(currentLine);
                     currentLine++;
                   }
                 }
@@ -129,139 +130,201 @@ jobs:
             function isLineInDiff(filePath, line) {
               const normalized = normPath(filePath);
               const fileLines = diffLines.get(normalized);
-              if (!fileLines || fileLines.size === 0) return true;
+              if (!fileLines || fileLines.size === 0) return false;
               return fileLines.has(line);
             }
 
-            // ── Traduções do ESLint — mensagens curtas e diretas ──
+            /** Converte array de linhas em ranges: "L19, L21–L23, L30" */
+            function compressLineNumbers(lines) {
+              const sorted = [...new Set(lines)].filter(Number).sort((a, b) => a - b);
+              if (sorted.length === 0) return '';
+              const ranges = [];
+              let start = sorted[0], end = sorted[0];
+              for (let i = 1; i <= sorted.length; i++) {
+                if (i < sorted.length && sorted[i] === end + 1) {
+                  end = sorted[i];
+                } else {
+                  ranges.push(start === end ? `L${start}` : `L${start}–L${end}`);
+                  if (i < sorted.length) { start = sorted[i]; end = sorted[i]; }
+                }
+              }
+              return ranges.join(', ');
+            }
+
+            /** Para file-level: âncora na última linha do diff. GitHub só aceita linha no diff; sem diff → null (vai pro body). */
+            function getAnchorLineEnd(filePath) {
+              const normalized = normPath(filePath);
+              const fileLines = diffLines.get(normalized);
+              if (fileLines && fileLines.size > 0) return Math.max(...fileLines);
+              return null;
+            }
+
+            // Mensagens canônicas por categoria (evita duplicação semântica)
+            const CANONICAL_MESSAGES = {
+              'comment': '💬 **Comentários no código** — remova ou reduza. Código autodocumentável é o padrão DLF.',
+              'commented-code': '🗑️ **Código comentado** — remova. O Git guarda o histórico.',
+              'todo-comment': '🏷️ **TODO/FIXME** — resolva antes de mergear ou crie uma Issue.',
+              'unused-import': '🧹 **Imports não utilizados** — remova. VS Code: Organize Imports.',
+              'console-log': '🧹 **console** — remova. Use Toast para feedback.',
+              'console-in-catch': '🧹 **console em catch** — use Toast ou Sentry.',
+              'file-size': '📏 **Arquivo muito longo** — divida em componentes/hooks (máx. 200 linhas).',
+              'hook-placement': '🪝 **Hooks** só no nível superior do componente.',
+              'hook-extraction': '🪝 **Extraia lógica** para um custom hook.',
+              'scattered-constants': '📦 **Constantes dispersas** — mova para `/consts`.',
+              'atomic-design': '🏗️ **Atomic Design** — um componente por arquivo.',
+              'large-constant': '📦 **Constante grande** — mova para arquivo em `/consts`.',
+              'multiple-components': '🧩 **Múltiplos componentes** — um arquivo, um componente.',
+              'inline-type': '📐 **Types inline** — mova para `/interfaces` ou `/types`.',
+              'long-function': '📐 **Função longa** — extraia para funções menores.',
+              'repetitive-pattern': '🔄 **Padrão repetitivo** — extraia função/hook.',
+              'too-many-params': '📐 **Muitos parâmetros** — use objeto de opções.',
+              'too-many-states': '🧠 **Muitos estados** — extraia para custom hook.',
+              'duplicate-pattern': '🔄 **Padrão duplicado** — extraia e reutilize.',
+              'large-jsx': '🧩 **JSX extenso** — extraia subcomponentes.',
+              'supabase-in-component': '🗄️ **Supabase no componente** — mova para `/lib` ou hook.',
+              'fetch-in-component': '🌐 **Fetch no componente** — centralize em `/lib` ou hook.',
+            };
+
             const translateMessage = (ruleId, message) => {
               const varName = message.split("'")[1] || '';
               const translations = {
                 '@typescript-eslint/no-unused-vars': `🧹 **Não utilizado**: \`${varName || 'variável'}\` — remova ou prefixe com \`_\`.`,
-                '@typescript-eslint/no-unused-expressions': '🧹 **Expressão sem efeito** — falta atribuição ou chamada de função?',
-                '@typescript-eslint/no-explicit-any': '📐 **Evite `any`** — defina o tipo correto em `/interfaces` ou use `unknown`.',
+                '@typescript-eslint/no-unused-expressions': '🧹 **Expressão sem efeito** — falta atribuição ou chamada?',
+                '@typescript-eslint/no-explicit-any': '📐 **Evite `any`** — use tipo em `/interfaces` ou `unknown`.',
                 '@typescript-eslint/no-var-requires': '📦 **Use `import`** em vez de `require()`.',
                 '@typescript-eslint/consistent-type-definitions': '📐 **Use `interface`** em vez de `type` para objetos.',
                 'no-inline-comments': '💬 **Comentário inline** — remova ou mova para linha acima.',
                 'line-comment-position': '💬 **Comentário na posição errada** — mova para linha acima.',
                 'no-warning-comments': '🏷️ **TODO/FIXME** — resolva antes de mergear.',
                 'spaced-comment': '💬 Adicione espaço após `//`.',
-                'max-lines': '📏 **Arquivo muito longo** — ultrapassa 200 linhas. Divida o arquivo.',
-                'max-lines-per-function': '📐 **Função muito longa** — extraia lógica para funções menores.',
-                'max-statements': '📐 **Muitas declarações** — extraia para hooks ou utilitários.',
-                'max-params': '📐 **Muitos parâmetros** — use um objeto de configuração.',
-                'complexity': '🧠 **Complexidade alta** — simplifique com early returns ou extraia funções.',
+                'max-lines': '📏 **Arquivo muito longo** — divida o arquivo.',
+                'max-lines-per-function': '📐 **Função muito longa** — extraia lógica.',
+                'max-statements': '📐 **Muitas declarações** — extraia hooks/utilitários.',
+                'max-params': '📐 **Muitos parâmetros** — use objeto de configuração.',
+                'complexity': '🧠 **Complexidade alta** — simplifique ou extraia funções.',
                 'max-depth': '🧠 **Aninhamento excessivo** — use early returns.',
                 'max-nested-callbacks': '🧠 **Callbacks aninhados** — use async/await.',
-                'no-console': '🧹 **console detectado** — remova. Use Toast para feedback ao usuário.',
-                '@next/next/no-html-link-for-pages': '⚡ Use `<Link>` do Next.js em vez de `<a>`.',
-                '@next/next/no-img-element': '⚡ Use `<Image>` do Next.js em vez de `<img>`.',
+                'no-console': '🧹 **console** — remova. Use Toast.',
+                '@next/next/no-html-link-for-pages': '⚡ Use `<Link>` do Next.js.',
+                '@next/next/no-img-element': '⚡ Use `<Image>` do Next.js.',
                 '@next/next/no-sync-scripts': '⚡ Use `<Script>` do Next.js.',
-                '@next/next/no-page-custom-font': '⚡ Use `next/font` para fontes.',
-                'react/jsx-key': '🔑 **Faltou `key`** — elementos em listas precisam de key única.',
-                'react/jsx-no-duplicate-props': '🚫 **Props duplicadas** neste componente.',
-                'react/jsx-no-undef': `🚫 **\`${varName || 'Componente'}\` não definido** — verifique o import.`,
+                '@next/next/no-page-custom-font': '⚡ Use `next/font`.',
+                'react/jsx-key': '🔑 **Faltou `key`** em lista.',
+                'react/jsx-no-duplicate-props': '🚫 **Props duplicadas**.',
+                'react/jsx-no-undef': `🚫 **\`${varName || 'Componente'}\` não definido** — verifique import.`,
                 'react/no-children-prop': '🚫 Use `<Comp>conteúdo</Comp>` em vez de prop children.',
                 'react/no-danger-with-children': '🚫 Não use dangerouslySetInnerHTML com children.',
-                'react/no-deprecated': '⚠️ **API deprecated** — consulte a documentação.',
-                'react/no-direct-mutation-state': '🚫 Use `setState()` ou useState setter.',
-                'react/no-unescaped-entities': '⚠️ Escape caracteres especiais em JSX.',
-                'react/self-closing-comp': '🧹 Use `<Comp />` quando não tem children.',
-                'react-hooks/rules-of-hooks': '🚫 **Hooks** só podem ser chamados no nível superior do componente.',
+                'react/no-deprecated': '⚠️ **API deprecated**.',
+                'react/no-direct-mutation-state': '🚫 Use setState() ou useState setter.',
+                'react/no-unescaped-entities': '⚠️ Escape caracteres em JSX.',
+                'react/self-closing-comp': '🧹 Use `<Comp />` sem children.',
+                'react-hooks/rules-of-hooks': '🚫 **Hooks** só no nível superior.',
                 'react-hooks/exhaustive-deps': '⚠️ **Dependências faltando** no array do hook.',
               };
               return translations[ruleId] || `**${ruleId}**: ${message}`;
             };
 
-            // ── Coletar TODOS os comentários para enviar numa única Review ──
             const reviewComments = [];
+            const bodyOnlyLines = [];
             let hasLintErrors = false;
 
-            // Regras ESLint que o architecture-check já cobre de forma consolidada
-            // Não gerar comentários individuais para evitar poluição
             const SKIP_ESLINT_RULES = new Set([
-              'no-console',
-              'no-inline-comments',
-              'line-comment-position',
-              'no-warning-comments',
-              'spaced-comment',
-              'max-lines',
-              'max-lines-per-function',
-              'max-statements',
-              'max-params',
+              'no-console', 'no-inline-comments', 'line-comment-position', 'no-warning-comments',
+              'spaced-comment', 'max-lines', 'max-lines-per-function', 'max-statements', 'max-params',
               '@typescript-eslint/no-unused-vars',
             ]);
 
-            // ESLint — só regras que o architecture-check NÃO cobre
+            // ESLint — agrupar por { path, ruleId }, 1 comentário por grupo com ranges
             if (fs.existsSync('eslint-report.json')) {
               const report = JSON.parse(fs.readFileSync('eslint-report.json', 'utf8'));
-              const filesWithErrors = report.filter(f => f.messages.length > 0);
-
-              for (const file of filesWithErrors) {
+              const byPathRule = new Map();
+              for (const file of report.filter(f => f.messages.length > 0)) {
                 const relativePath = normPath(path.relative(process.cwd(), file.filePath));
                 if (!modifiedFiles.has(relativePath)) continue;
-
                 for (const msg of file.messages) {
-                  if (!isLineInDiff(relativePath, msg.line)) continue;
-                  if (msg.severity === 2) hasLintErrors = true;
-
-                  // Pular regras que já são cobertas pelo architecture-check consolidado
                   if (SKIP_ESLINT_RULES.has(msg.ruleId)) continue;
-
-                  const translatedMessage = translateMessage(msg.ruleId, msg.message);
-
-                  reviewComments.push({
-                    path: relativePath,
-                    line: msg.line,
-                    body: `${translatedMessage}\n\n<sub>🤖 DLF Review Agent</sub>`,
-                  });
+                  if (msg.severity === 2) hasLintErrors = true;
+                  const key = `${relativePath}::${msg.ruleId}`;
+                  if (!byPathRule.has(key)) byPathRule.set(key, []);
+                  byPathRule.get(key).push({ line: msg.line, message: msg.message, ruleId: msg.ruleId });
+                }
+              }
+              for (const [key, items] of byPathRule) {
+                const [relativePath, ruleId] = key.split('::');
+                const lines = items.map(i => i.line);
+                const inDiff = lines.filter(l => isLineInDiff(relativePath, l));
+                const anchor = inDiff.length > 0 ? Math.min(...inDiff) : null;
+                const ranges = compressLineNumbers(lines);
+                const body = `${translateMessage(ruleId, items[0].message)}${ranges ? '\n\nLinhas: ' + ranges : ''}\n\n<sub>dfl-bot-codereviwer</sub>`;
+                if (anchor != null) {
+                  reviewComments.push({ path: relativePath, line: anchor, body, category: ruleId });
+                } else {
+                  bodyOnlyLines.push({ path: relativePath, body, type: 'eslint' });
                 }
               }
             }
 
-            // Arquitetura — separar fileLevel (resumo) de inline (linhas)
+            // Arquitetura — fileLevel: âncora no final do arquivo (nunca linha 1); inline: agrupar por { file, category }
             const fileLevelIssues = [];
+            const archByFileCategory = new Map();
             if (fs.existsSync('architecture-report.json')) {
               const archIssues = JSON.parse(fs.readFileSync('architecture-report.json', 'utf8'));
-
               for (const issue of archIssues) {
                 const filePath = normPath(issue.file);
                 if (!modifiedFiles.has(filePath)) continue;
 
-                // Issues file-level vão pro body da review, não inline
                 if (issue.fileLevel) {
-                  fileLevelIssues.push({ file: filePath, ...issue });
+                  const anchor = getAnchorLineEnd(filePath);
+                  const msg = CANONICAL_MESSAGES[issue.category] || issue.message;
+                  const body = `💡 ${msg}\n\n<sub>dfl-bot-codereviwer</sub>`;
+                  if (anchor != null && anchor !== 1) {
+                    reviewComments.push({ path: filePath, line: anchor, body, category: issue.category });
+                  } else {
+                    fileLevelIssues.push({ file: filePath, message: msg, ...issue });
+                  }
                   continue;
                 }
 
-                if (!isLineInDiff(filePath, issue.line)) continue;
+                const catKey = `${filePath}::${issue.category || 'other'}`;
+                if (!archByFileCategory.has(catKey)) archByFileCategory.set(catKey, []);
+                archByFileCategory.get(catKey).push(issue);
+              }
 
-                reviewComments.push({
-                  path: filePath,
-                  line: issue.line,
-                  body: `💡 ${issue.message}\n\n<sub>🤖 DLF Review Agent</sub>`,
-                });
+              for (const [catKey, issues] of archByFileCategory) {
+                const [filePath, category] = catKey.split('::');
+                const lines = issues.map(i => i.line);
+                const inDiff = lines.filter(l => isLineInDiff(filePath, l));
+                const anchor = inDiff.length > 0 ? Math.min(...inDiff) : null;
+                const ranges = compressLineNumbers(lines);
+                const msg = CANONICAL_MESSAGES[category] || issues[0].message;
+                const body = `💡 ${msg}${ranges ? '\n\nLinhas: ' + ranges : ''}\n\n<sub>dfl-bot-codereviwer</sub>`;
+                if (anchor != null) {
+                  reviewComments.push({ path: filePath, line: anchor, body, category });
+                } else {
+                  fileLevelIssues.push({ file: filePath, message: msg, category });
+                }
               }
             }
 
-            // ── Deduplicar: agrupar comentários da mesma linha em um só ──
-            const grouped = new Map();
+            // Dedupe: (1) path::line::category (2) path + body idêntico (trim)
+            const byKey = new Map();
             for (const c of reviewComments) {
-              const key = `${c.path}::${c.line}`;
-              if (grouped.has(key)) {
-                grouped.get(key).body += '\n\n---\n\n' + c.body;
-              } else {
-                grouped.set(key, { ...c });
-              }
+              const key = `${c.path}::${c.line}::${c.category || ''}`;
+              if (!byKey.has(key)) byKey.set(key, c);
             }
-            const dedupedComments = [...grouped.values()];
+            const byPathBody = new Map();
+            for (const c of byKey.values()) {
+              const key = `${c.path}::${c.body.trim()}`;
+              if (!byPathBody.has(key)) byPathBody.set(key, c);
+            }
+            const dedupedComments = [...byPathBody.values()].map(({ path, line, body }) => ({ path, line, body }));
 
-            // ── Montar body da review com issues file-level ──
+            // ── Montar body da review com issues file-level e body-only ──
             const event = hasLintErrors ? 'REQUEST_CHANGES' : 'COMMENT';
             let reviewBodyParts = [];
 
-            if (dedupedComments.length > 0 || fileLevelIssues.length > 0) {
-              reviewBodyParts.push(`🤖 **DLF Code Review Agent** — ${dedupedComments.length} comentário(s) nas linhas dos arquivos.`);
+            if (dedupedComments.length > 0 || fileLevelIssues.length > 0 || bodyOnlyLines.length > 0) {
+              reviewBodyParts.push(`**dfl-bot-codereviwer** — ${dedupedComments.length} comentário(s) nas linhas.`);
 
               if (fileLevelIssues.length > 0) {
                 reviewBodyParts.push('');
@@ -270,11 +333,18 @@ jobs:
                   reviewBodyParts.push(`- ${issue.message}`);
                 }
               }
+              if (bodyOnlyLines.length > 0) {
+                reviewBodyParts.push('');
+                reviewBodyParts.push('**Sem linha no diff (revisar arquivo):**');
+                for (const item of bodyOnlyLines) {
+                  reviewBodyParts.push(`- \`${item.path}\`: ${item.body.replace(/\n/g, ' ').trim().slice(0, 120)}…`);
+                }
+              }
 
               reviewBodyParts.push('');
               reviewBodyParts.push('Revise em **Files changed** e aprove quando estiver ok.');
             } else {
-              reviewBodyParts.push('🤖 **DLF Code Review Agent**: Nenhum problema encontrado. ✅');
+              reviewBodyParts.push('**dfl-bot-codereviwer**: Nenhum problema encontrado. ✅');
             }
 
             const reviewBody = reviewBodyParts.join('\n');
@@ -349,7 +419,7 @@ jobs:
             // ── Se zero issues, elogie ──
             if (totalIssues === 0 && !typecheckFailed) {
               const body = [
-                '## 🤖 DLF Code Review Agent',
+                '## dfl-bot-codereviwer',
                 '',
                 '### ✅ PR impecável! Parabéns! 🎉',
                 '',
@@ -361,10 +431,10 @@ jobs:
                 'Continue assim! Código limpo e bem organizado facilita a vida de todo o time. 💪',
                 '',
                 '---',
-                '<sub>🤖 DLF Code Review Agent v2.0</sub>',
+                '<sub>dfl-bot-codereviwer</sub>',
               ].join('\n');
 
-              const marker = '## 🤖 DLF Code Review Agent';
+              const marker = '## dfl-bot-codereviwer';
               const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr_number });
               const existing = comments.find(c => c.user?.login === 'github-actions[bot]' && c.body?.includes(marker));
 
@@ -379,7 +449,7 @@ jobs:
             // ── Construir resumo ──
             const sections = [];
 
-            sections.push('## 🤖 DLF Code Review Agent');
+            sections.push('## dfl-bot-codereviwer');
             sections.push('');
             sections.push('Olá! Analisei seu PR e aqui está o resumo da review:');
             sections.push('');
@@ -526,10 +596,10 @@ jobs:
 
             sections.push('');
             sections.push('---');
-            sections.push('<sub>🤖 DLF Code Review Agent v2.0 — Analisando PRs para que você aprenda mais rápido</sub>');
+            sections.push('<sub>dfl-bot-codereviwer</sub>');
 
             const body = sections.join('\n');
-            const marker = '## 🤖 DLF Code Review Agent';
+            const marker = '## dfl-bot-codereviwer';
 
             // Atualizar ou criar comentário
             const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr_number });
